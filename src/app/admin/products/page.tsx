@@ -79,7 +79,7 @@ export default function ProductsPage() {
   const storeId = Number(process.env.NEXT_PUBLIC_STORE_ID || 1);
 
   const { data, loading, error } = useQuery<GetProductsResponse>(GET_PRODUCTS, {
-    variables: { filter: { store_id: storeId }, pagination: { limit: 50, page: 1 } },
+    variables: { filter: { store_id: storeId }, pagination: { page: 1, limit: 50 } },
   });
 
   const products: Product[] = data?.products?.items || [];

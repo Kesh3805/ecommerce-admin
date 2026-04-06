@@ -26,7 +26,9 @@ export const PRODUCT_FRAGMENT = gql`
       meta_description
     }
     categories {
-      __typename
+      id: category_id
+      name
+      slug
     }
     options {
       id: option_id
@@ -36,6 +38,22 @@ export const PRODUCT_FRAGMENT = gql`
         id: value_id
         value
         position
+      }
+    }
+    variants {
+      id: variant_id
+      title
+      sku
+      price
+      compareAtPrice: compare_at_price
+      inventoryPolicy: inventory_policy
+      inventoryItemId: inventory_item_id
+      inventory_item {
+        id: inventory_item_id
+        total_available
+        levels {
+          available_quantity
+        }
       }
     }
   }
@@ -140,7 +158,22 @@ export const ADD_PRODUCT_OPTION = gql`
 export const GET_VARIANTS = gql`
   query GetVariants($productId: Int!) {
     variants(productId: $productId) {
-      __typename
+      id: variant_id
+      title
+      sku
+      price
+      compareAtPrice: compare_at_price
+      inventoryPolicy: inventory_policy
+      inventoryItemId: inventory_item_id
+      inventory_item {
+        id: inventory_item_id
+        total_available
+        levels {
+          available_quantity
+          reserved_quantity
+          location_id
+        }
+      }
     }
   }
 `;
@@ -148,7 +181,15 @@ export const GET_VARIANTS = gql`
 export const GENERATE_VARIANTS = gql`
   mutation GenerateVariants($input: GenerateVariantsInput!) {
     generateVariants(input: $input) {
-      __typename
+      created
+      variants {
+        id: variant_id
+        title
+        sku
+        price
+        inventoryPolicy: inventory_policy
+        inventoryItemId: inventory_item_id
+      }
     }
   }
 `;
@@ -156,7 +197,35 @@ export const GENERATE_VARIANTS = gql`
 export const UPDATE_VARIANT = gql`
   mutation UpdateVariant($input: UpdateVariantInput!) {
     updateVariant(input: $input) {
-      __typename
+      id: variant_id
+      title
+      sku
+      price
+      compareAtPrice: compare_at_price
+      inventoryPolicy: inventory_policy
+      inventoryItemId: inventory_item_id
+      inventory_item {
+        id: inventory_item_id
+        total_available
+      }
+    }
+  }
+`;
+
+export const CREATE_VARIANT = gql`
+  mutation CreateVariant($input: CreateVariantInput!) {
+    createVariant(input: $input) {
+      id: variant_id
+      title
+      sku
+      price
+      compareAtPrice: compare_at_price
+      inventoryPolicy: inventory_policy
+      inventoryItemId: inventory_item_id
+      inventory_item {
+        id: inventory_item_id
+        total_available
+      }
     }
   }
 `;
@@ -164,7 +233,14 @@ export const UPDATE_VARIANT = gql`
 export const GET_INVENTORY_LEVELS = gql`
   query GetInventoryLevels($variantId: Int!) {
     inventoryLevels(variantId: $variantId) {
-      __typename
+      inventory_level_id
+      available_quantity
+      reserved_quantity
+      location_id
+      location {
+        location_id
+        name
+      }
     }
   }
 `;
@@ -172,7 +248,9 @@ export const GET_INVENTORY_LEVELS = gql`
 export const GET_LOCATIONS = gql`
   query GetLocations($storeId: Int!) {
     locations(storeId: $storeId) {
-      __typename
+      location_id
+      name
+      is_active
     }
   }
 `;
@@ -180,7 +258,35 @@ export const GET_LOCATIONS = gql`
 export const ADJUST_INVENTORY = gql`
   mutation AdjustInventory($input: AdjustInventoryInput!) {
     adjustInventory(input: $input) {
-      __typename
+      level {
+        inventory_level_id
+        available_quantity
+        reserved_quantity
+        location_id
+      }
+      adjustment {
+        adjustment_id
+        quantity
+        reason
+      }
+    }
+  }
+`;
+
+export const SET_INVENTORY_LEVEL = gql`
+  mutation SetInventoryLevel($input: SetInventoryLevelInput!) {
+    setInventoryLevel(input: $input) {
+      level {
+        inventory_level_id
+        available_quantity
+        reserved_quantity
+        location_id
+      }
+      adjustment {
+        adjustment_id
+        quantity
+        reason
+      }
     }
   }
 `;

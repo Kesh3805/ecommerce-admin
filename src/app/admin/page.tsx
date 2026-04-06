@@ -1,7 +1,24 @@
+'use client';
+
+import { useQuery } from '@apollo/client/react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Package, ShoppingCart, Users, TrendingUp } from 'lucide-react';
+import { GET_PRODUCTS } from '@/graphql/operations';
+
+interface GetProductsResponse {
+  products: {
+    total: number;
+  };
+}
 
 export default function AdminDashboard() {
+  const storeId = Number(process.env.NEXT_PUBLIC_STORE_ID || 1);
+  const { data } = useQuery<GetProductsResponse>(GET_PRODUCTS, {
+    variables: { filter: { store_id: storeId }, pagination: { page: 1, limit: 1 } },
+  });
+
+  const totalProducts = data?.products?.total ?? 0;
+
   return (
     <div className="space-y-6">
       <div className="rounded-2xl border bg-linear-to-r from-primary/10 via-secondary/30 to-muted px-6 py-5">
@@ -21,7 +38,7 @@ export default function AdminDashboard() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">0</div>
+            <div className="text-2xl font-bold">{totalProducts}</div>
             <p className="text-xs text-muted-foreground">
               Products in catalog
             </p>

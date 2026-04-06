@@ -10,6 +10,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { VariantPriceEditor } from '@/components/products/variant-price-editor';
 import { VariantInventoryEditor } from '@/components/products/variant-inventory-editor';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 interface VariantTableProps {
   optionGroups: OptionGroup[];
@@ -33,6 +34,7 @@ export function VariantTable({ optionGroups, rows, onChange }: VariantTableProps
           ))}
           <TableHead>Price</TableHead>
           <TableHead>Inventory</TableHead>
+          <TableHead>Policy</TableHead>
           <TableHead>SKU</TableHead>
         </TableRow>
       </TableHeader>
@@ -55,6 +57,32 @@ export function VariantTable({ optionGroups, rows, onChange }: VariantTableProps
                   onChange(rows.map((item) => (item.id === row.id ? { ...item, inventory } : item)))
                 }
               />
+            </TableCell>
+            <TableCell>
+              <Select
+                value={row.inventoryPolicy}
+                onValueChange={(inventoryPolicy) => {
+                  if (!inventoryPolicy) {
+                    return;
+                  }
+
+                  onChange(
+                    rows.map((item) =>
+                      item.id === row.id
+                        ? { ...item, inventoryPolicy: inventoryPolicy as 'DENY' | 'CONTINUE' }
+                        : item,
+                    ),
+                  );
+                }}
+              >
+                <SelectTrigger className="w-[120px]">
+                  <SelectValue placeholder="Policy" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="DENY">Deny</SelectItem>
+                  <SelectItem value="CONTINUE">Continue</SelectItem>
+                </SelectContent>
+              </Select>
             </TableCell>
             <TableCell>
               <Input

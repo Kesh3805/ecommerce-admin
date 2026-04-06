@@ -19,6 +19,7 @@ export interface VariantRow {
   sku: string;
   price: number;
   inventory: number;
+  inventoryPolicy: 'DENY' | 'CONTINUE';
 }
 
 export interface CategoryMetafield {

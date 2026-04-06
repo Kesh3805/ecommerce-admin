@@ -9,7 +9,15 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { ArrowLeft, Save } from 'lucide-react';
 
-import { CREATE_PRODUCT, GET_CATEGORIES, GET_PRODUCTS } from '@/graphql/operations';
+import {
+  ADD_PRODUCT_OPTION,
+  CREATE_PRODUCT,
+  CREATE_VARIANT,
+  GET_CATEGORIES,
+  GET_LOCATIONS,
+  GET_PRODUCTS,
+  SET_INVENTORY_LEVEL,
+} from '@/graphql/operations';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -52,6 +60,12 @@ interface BackendCategory {
 
 interface GetCategoriesResponse {
   categories: BackendCategory[];
+}
+
+interface CreateVariantResponse {
+  createVariant: {
+    inventoryItemId?: number;
+  };
 }
 
 function slugify(input: string) {
@@ -146,11 +160,21 @@ export default function NewProductPage() {
   };
 
   const [createProduct, { loading }] = useMutation<{ createProduct: { id: number } }>(CREATE_PRODUCT, {
-    refetchQueries: [{ query: GET_PRODUCTS, variables: { filter: { store_id: storeId }, pagination: { limit: 50, page: 1 } } }],
-    onCompleted: () => {
-      router.push('/admin/products');
-    },
+    refetchQueries: [
+      { query: GET_PRODUCTS, variables: { filter: { store_id: storeId }, pagination: { page: 1, limit: 50 } } },
+    ],
   });
+
+  const [addProductOption] = useMutation(ADD_PRODUCT_OPTION);
+  const [createVariant] = useMutation<CreateVariantResponse>(CREATE_VARIANT);
+  const [setInventoryLevel] = useMutation(SET_INVENTORY_LEVEL);
+
+  const { data: locationsData } = useQuery<{ locations: Array<{ location_id: number; is_active: boolean }> }>(
+    GET_LOCATIONS,
+    {
+      variables: { storeId },
+    },
+  );
 
   const onSubmit = async (data: ProductFormData) => {
     const parsedCategoryId = Number(data.categoryId);
@@ -158,12 +182,13 @@ export default function NewProductPage() {
     const computedHandle = data.seoHandle?.trim() || slugify(data.title);
 
     try {
-      await createProduct({
+      const created = await createProduct({
         variables: {
           input: {
             title: data.title,
             description: data.description || undefined,
             brand: data.brand || undefined,
+            status,
             store_id: storeId,
             category_ids: categoryIds,
             seo: {
@@ -174,6 +199,72 @@ export default function NewProductPage() {
           },
         },
       });
+
+      const createdProductId = created.data?.createProduct?.id;
+      if (!createdProductId) {
+        throw new Error('Product creation failed: missing product ID in response.');
+      }
+
+      const normalizedOptionGroups = optionGroups
+        .map((group) => ({
+          name: group.name.trim(),
+          values: group.values.map((value) => value.trim()).filter((value) => value.length > 0),
+        }))
+        .filter((group) => group.name.length > 0 && group.values.length > 0);
+
+      for (const [index, group] of normalizedOptionGroups.entries()) {
+        await addProductOption({
+          variables: {
+            input: {
+              product_id: createdProductId,
+              name: group.name,
+              values: group.values,
+              position: index,
+            },
+          },
+        });
+      }
+
+      const activeLocation = (locationsData?.locations || []).find((location) => location.is_active);
+
+      const normalizedVariantRows = variantRows.filter(
+        (row) => row.sku.trim().length > 0 && Number.isFinite(row.price) && row.price >= 0,
+      );
+
+      for (const row of normalizedVariantRows) {
+        const optionNamesInOrder = normalizedOptionGroups.map((group) => group.name);
+        const optionValuesInOrder = optionNamesInOrder.map((name) => row.options[name]);
+
+        const createdVariant = await createVariant({
+          variables: {
+            input: {
+              product_id: createdProductId,
+              option1_value: optionValuesInOrder[0] || undefined,
+              option2_value: optionValuesInOrder[1] || undefined,
+              option3_value: optionValuesInOrder[2] || undefined,
+              sku: row.sku,
+              price: row.price,
+              inventory_policy: row.inventoryPolicy,
+              create_inventory: true,
+            },
+          },
+        });
+
+        const inventoryItemId = createdVariant?.data?.createVariant?.inventoryItemId;
+        if (activeLocation && inventoryItemId && Number.isFinite(row.inventory) && row.inventory >= 0) {
+          await setInventoryLevel({
+            variables: {
+              input: {
+                inventory_item_id: inventoryItemId,
+                location_id: activeLocation.location_id,
+                available_quantity: row.inventory,
+              },
+            },
+          });
+        }
+      }
+
+      router.push('/admin/products');
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Failed to create product.';
 

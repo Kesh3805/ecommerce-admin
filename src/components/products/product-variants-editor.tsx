@@ -59,6 +59,7 @@ export function ProductVariantsEditor({
         sku: `${sku}-${index + 1}`,
         price: 399,
         inventory: 20,
+        inventoryPolicy: 'DENY',
       };
     });
 

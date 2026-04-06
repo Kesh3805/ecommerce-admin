@@ -90,14 +90,16 @@ interface Variant {
 }
 
 interface Product {
-  id: string;
+  id: number;
   title: string;
   description?: string;
   status: 'DRAFT' | 'ACTIVE' | 'ARCHIVED';
   brand?: string;
-  seoTitle?: string;
-  seoDescription?: string;
-  seoHandle?: string;
+  seo?: {
+    meta_title?: string;
+    meta_description?: string;
+    handle?: string;
+  };
   publishedAt?: string;
   options: ProductOption[];
   variants: Variant[];
@@ -126,7 +128,7 @@ function OptionEditor({
   options,
   onOptionAdded,
 }: {
-  productId: string;
+  productId: number;
   options: ProductOption[];
   onOptionAdded: () => void;
 }) {
@@ -153,10 +155,11 @@ function OptionEditor({
 
     await addOption({
       variables: {
-        productId,
         input: {
+          product_id: productId,
           name: optionName.trim(),
           values,
+          position: options.length,
         },
       },
     });
@@ -255,7 +258,7 @@ function VariantsTable({
   options,
   onVariantsGenerated,
 }: {
-  productId: string;
+  productId: number;
   variants: Variant[];
   options: ProductOption[];
   onVariantsGenerated: () => void;
@@ -269,10 +272,11 @@ function VariantsTable({
   const handleGenerateVariants = async () => {
     await generateVariants({
       variables: {
-        productId,
         input: {
-          basePrice: 0,
-          baseSku: 'SKU',
+          product_id: productId,
+          default_price: 0,
+          sku_prefix: 'SKU',
+          create_inventory: true,
         },
       },
     });
@@ -345,11 +349,10 @@ export default function ProductDetailPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
-  const storeId = Number(process.env.NEXT_PUBLIC_STORE_ID || 1);
   const [activeTab, setActiveTab] = useState('details');
 
   const { data, loading, error, refetch } = useQuery<{ product: Product }>(GET_PRODUCT, {
-    variables: { id },
+    variables: { id: Number(id) },
   });
 
   const product = data?.product;
@@ -366,16 +369,16 @@ export default function ProductDetailPage({
           title: product.title,
           description: product.description || '',
           brand: product.brand || '',
-          seoTitle: product.seoTitle || '',
-          seoDescription: product.seoDescription || '',
-          seoHandle: product.seoHandle || '',
+          seoTitle: product.seo?.meta_title || '',
+          seoDescription: product.seo?.meta_description || '',
+          seoHandle: product.seo?.handle || '',
         }
       : undefined,
   });
 
   const [updateProduct, { loading: updating }] = useMutation(UPDATE_PRODUCT);
   const [deleteProduct, { loading: deleting }] = useMutation(DELETE_PRODUCT, {
-    refetchQueries: [{ query: GET_PRODUCTS, variables: { filter: { store_id: storeId }, pagination: { limit: 50, page: 1 } } }],
+    refetchQueries: [{ query: GET_PRODUCTS, variables: { pagination: { page: 1, limit: 50 } } }],
     onCompleted: () => {
       router.push('/admin/products');
     },
@@ -386,14 +389,16 @@ export default function ProductDetailPage({
   const onSubmit = async (formData: ProductFormData) => {
     await updateProduct({
       variables: {
-        id,
         input: {
+          product_id: Number(id),
           title: formData.title,
           description: formData.description || undefined,
           brand: formData.brand || undefined,
-          seoTitle: formData.seoTitle || undefined,
-          seoDescription: formData.seoDescription || undefined,
-          seoHandle: formData.seoHandle || undefined,
+          seo: {
+            handle: formData.seoHandle || undefined,
+            meta_title: formData.seoTitle || undefined,
+            meta_description: formData.seoDescription || undefined,
+          },
         },
       },
     });
@@ -401,18 +406,18 @@ export default function ProductDetailPage({
   };
 
   const handlePublish = async () => {
-    await publishProduct({ variables: { id } });
+    await publishProduct({ variables: { id: Number(id) } });
     refetch();
   };
 
   const handleArchive = async () => {
-    await archiveProduct({ variables: { id } });
+    await archiveProduct({ variables: { id: Number(id) } });
     refetch();
   };
 
   const handleDelete = async () => {
     if (confirm('Are you sure you want to delete this product?')) {
-      await deleteProduct({ variables: { id } });
+      await deleteProduct({ variables: { id: Number(id) } });
     }
   };
 
