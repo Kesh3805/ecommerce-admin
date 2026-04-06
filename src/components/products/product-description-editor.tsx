@@ -15,7 +15,12 @@ interface ProductDescriptionEditorProps {
 
 export function ProductDescriptionEditor({ value, onChange }: ProductDescriptionEditorProps) {
   const editor = useEditor({
-    extensions: [StarterKit, Link],
+    extensions: [
+      StarterKit.configure({
+        link: false,
+      }),
+      Link,
+    ],
     content: value || '<p></p>',
     immediatelyRender: false,
     editorProps: {

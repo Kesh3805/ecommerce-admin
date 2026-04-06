@@ -92,6 +92,7 @@ export default function NewProductPage() {
     control,
     register,
     handleSubmit,
+    setError,
     setValue,
     formState: { errors, isSubmitting },
   } = useForm<ProductFormData>({
@@ -100,7 +101,7 @@ export default function NewProductPage() {
       title: '',
       description: '',
       brand: '',
-      categoryId: '',
+      categoryId: '__none__',
       tags: '',
       seoTitle: '',
       seoDescription: '',
@@ -114,19 +115,26 @@ export default function NewProductPage() {
   const [variantRows, setVariantRows] = useState<VariantRow[]>([]);
   const [metafieldValues, setMetafieldValues] = useState<Record<string, string>>({});
 
-  const { data: categoriesData } = useQuery<GetCategoriesResponse>(GET_CATEGORIES, {
+  const { data: categoriesData, error: categoriesError } = useQuery<GetCategoriesResponse>(GET_CATEGORIES, {
     variables: { storeId },
   });
 
-  const categoryOptions: CategoryOption[] = (categoriesData?.categories || []).map((category) => ({
-    id: String(category.id),
-    label: category.name,
-    metafields: parseCategoryMetafields(category.metadata),
-  }));
+  const categoryOptions: CategoryOption[] = [
+    {
+      id: '__none__',
+      label: 'No category',
+      metafields: [],
+    },
+    ...(categoriesData?.categories || []).map((category) => ({
+      id: String(category.id),
+      label: category.name,
+      metafields: parseCategoryMetafields(category.metadata),
+    })),
+  ];
 
   const selectedCategoryId = useWatch({ control, name: 'categoryId' });
   useEffect(() => {
-    if (!selectedCategoryId && categoryOptions.length > 0) {
+    if (!selectedCategoryId) {
       setValue('categoryId', categoryOptions[0].id);
     }
   }, [categoryOptions, selectedCategoryId, setValue]);
@@ -146,25 +154,39 @@ export default function NewProductPage() {
 
   const onSubmit = async (data: ProductFormData) => {
     const parsedCategoryId = Number(data.categoryId);
-    const categoryIds = Number.isFinite(parsedCategoryId) ? [parsedCategoryId] : undefined;
+    const categoryIds = Number.isInteger(parsedCategoryId) && parsedCategoryId > 0 ? [parsedCategoryId] : undefined;
     const computedHandle = data.seoHandle?.trim() || slugify(data.title);
 
-    await createProduct({
-      variables: {
-        input: {
-          title: data.title,
-          description: data.description || undefined,
-          brand: data.brand || undefined,
-          store_id: storeId,
-          category_ids: categoryIds,
-          seo: {
-            handle: computedHandle,
-            meta_title: data.seoTitle || undefined,
-            meta_description: data.seoDescription || undefined,
+    try {
+      await createProduct({
+        variables: {
+          input: {
+            title: data.title,
+            description: data.description || undefined,
+            brand: data.brand || undefined,
+            store_id: storeId,
+            category_ids: categoryIds,
+            seo: {
+              handle: computedHandle,
+              meta_title: data.seoTitle || undefined,
+              meta_description: data.seoDescription || undefined,
+            },
           },
         },
-      },
-    });
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to create product.';
+
+      if (message.toLowerCase().includes('duplicate key value')) {
+        setError('root', {
+          message:
+            'Database sequence conflict on backend (duplicate primary key). Run a sequence reset/migration on API DB, then retry.',
+        });
+        return;
+      }
+
+      setError('root', { message });
+    }
   };
 
   const title = useWatch({ control, name: 'title' }) || 'New Product';
@@ -232,6 +254,12 @@ export default function NewProductPage() {
           </>
         )}
       />
+      {categoriesError && (
+        <p className="text-sm text-destructive">
+          Could not load categories from backend. You can still create the product without category.
+        </p>
+      )}
+      {errors.root && <p className="text-sm text-destructive">{errors.root.message}</p>}
     </form>
   );
 }
