@@ -345,6 +345,7 @@ export default function ProductDetailPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
+  const storeId = Number(process.env.NEXT_PUBLIC_STORE_ID || 1);
   const [activeTab, setActiveTab] = useState('details');
 
   const { data, loading, error, refetch } = useQuery<{ product: Product }>(GET_PRODUCT, {
@@ -374,7 +375,7 @@ export default function ProductDetailPage({
 
   const [updateProduct, { loading: updating }] = useMutation(UPDATE_PRODUCT);
   const [deleteProduct, { loading: deleting }] = useMutation(DELETE_PRODUCT, {
-    refetchQueries: [{ query: GET_PRODUCTS, variables: { filter: { limit: 50 } } }],
+    refetchQueries: [{ query: GET_PRODUCTS, variables: { filter: { store_id: storeId }, pagination: { limit: 50, page: 1 } } }],
     onCompleted: () => {
       router.push('/admin/products');
     },

@@ -146,7 +146,7 @@ export default function NewProductPage() {
   };
 
   const [createProduct, { loading }] = useMutation<{ createProduct: { id: number } }>(CREATE_PRODUCT, {
-    refetchQueries: [{ query: GET_PRODUCTS, variables: { filter: { limit: 50, store_id: storeId } } }],
+    refetchQueries: [{ query: GET_PRODUCTS, variables: { filter: { store_id: storeId }, pagination: { limit: 50, page: 1 } } }],
     onCompleted: () => {
       router.push('/admin/products');
     },

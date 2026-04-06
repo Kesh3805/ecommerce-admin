@@ -54,8 +54,8 @@ export const PRODUCT_LIST_FRAGMENT = gql`
 `;
 
 export const GET_PRODUCTS = gql`
-  query GetProducts($filter: ProductFilterInput) {
-    products(filter: $filter) {
+  query GetProducts($filter: ProductFilterInput, $pagination: PaginationInput) {
+    products(filter: $filter, pagination: $pagination) {
       items {
         ...ProductListFields
       }
