@@ -14,6 +14,7 @@ import {
   MapPin,
   LogOut,
   Sparkles,
+  Library,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -49,6 +50,11 @@ const navItems = [
     title: 'Categories',
     href: '/admin/categories',
     icon: Tags,
+  },
+  {
+    title: 'Collections',
+    href: '/admin/collections',
+    icon: Library,
   },
   {
     title: 'Inventory',

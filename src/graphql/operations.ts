@@ -26,6 +26,11 @@ export const PRODUCT_FRAGMENT = gql`
       meta_title
       meta_description
     }
+    metafields {
+      key
+      value
+    }
+    country_codes
     categories {
       id: category_id
       name
@@ -263,6 +268,18 @@ export const GET_LOCATIONS = gql`
   }
 `;
 
+export const GET_AVAILABLE_COUNTRIES = gql`
+  query GetAvailableCountries($storeId: Int!) {
+    availableCountries(storeId: $storeId)
+  }
+`;
+
+export const SET_STORE_COUNTRIES = gql`
+  mutation SetStoreCountries($input: SetStoreCountriesInput!) {
+    setStoreCountries(input: $input)
+  }
+`;
+
 export const ADJUST_INVENTORY = gql`
   mutation AdjustInventory($input: AdjustInventoryInput!) {
     adjustInventory(input: $input) {
@@ -306,7 +323,36 @@ export const GET_CATEGORIES = gql`
       name
       slug
       parent_id
+      metadata
     }
+  }
+`;
+
+export const CREATE_CATEGORY = gql`
+  mutation CreateCategory($input: CreateCategoryInput!) {
+    createCategory(input: $input) {
+      id: category_id
+      name
+      slug
+      parent_id
+    }
+  }
+`;
+
+export const UPDATE_CATEGORY = gql`
+  mutation UpdateCategory($id: Int!, $input: UpdateCategoryInput!) {
+    updateCategory(id: $id, input: $input) {
+      id: category_id
+      name
+      slug
+      parent_id
+    }
+  }
+`;
+
+export const DELETE_CATEGORY = gql`
+  mutation DeleteCategory($id: Int!) {
+    deleteCategory(id: $id)
   }
 `;
 
@@ -340,5 +386,107 @@ export const GET_PRODUCT_MEDIA = gql`
 export const DELETE_PRODUCT_MEDIA = gql`
   mutation DeleteProductMedia($mediaId: Int!) {
     deleteProductMedia(mediaId: $mediaId)
+  }
+`;
+
+// Collection queries for merchandising
+export const GET_COLLECTIONS = gql`
+  query GetCollections($filter: CollectionFilterInput) {
+    collections(filter: $filter) {
+      id: collection_id
+      name
+      slug
+      description
+      type: collection_type
+      isVisible: is_visible
+      productCount: product_count
+      imageUrl: image_url
+      createdAt: created_at
+      updatedAt: updated_at
+    }
+  }
+`;
+
+export const GET_COLLECTION = gql`
+  query GetCollection($id: Int!) {
+    collection(collectionId: $id) {
+      id: collection_id
+      name
+      slug
+      description
+      type: collection_type
+      isVisible: is_visible
+      productCount: product_count
+      imageUrl: image_url
+      metaTitle: meta_title
+      metaDescription: meta_description
+      products(limit: 100) {
+        product_id
+        title
+        status
+      }
+      rules {
+        ruleId: rule_id
+        field
+        operator
+        value
+        valueType: value_type
+        ruleGroup: rule_group
+      }
+    }
+  }
+`;
+
+export const CREATE_COLLECTION = gql`
+  mutation CreateCollection($input: CreateCollectionInput!) {
+    createCollection(input: $input) {
+      id: collection_id
+      name
+      slug
+    }
+  }
+`;
+
+export const UPDATE_COLLECTION = gql`
+  mutation UpdateCollection($input: UpdateCollectionInput!) {
+    updateCollection(input: $input) {
+      id: collection_id
+      name
+      slug
+    }
+  }
+`;
+
+export const DELETE_COLLECTION = gql`
+  mutation DeleteCollection($collectionId: Int!) {
+    deleteCollection(collectionId: $collectionId)
+  }
+`;
+
+export const ADD_PRODUCTS_TO_COLLECTION = gql`
+  mutation AddProductsToCollection($input: AddProductsToCollectionInput!) {
+    addProductsToCollection(input: $input)
+  }
+`;
+
+export const REMOVE_PRODUCTS_FROM_COLLECTION = gql`
+  mutation RemoveProductsFromCollection($collectionId: Int!, $productIds: [Int!]!) {
+    removeProductsFromCollection(collectionId: $collectionId, productIds: $productIds)
+  }
+`;
+
+export const SET_COLLECTION_RULES = gql`
+  mutation SetCollectionRules($collectionId: Int!, $rules: [CollectionRuleInput!]!) {
+    setCollectionRules(collectionId: $collectionId, rules: $rules) {
+      id: collection_id
+      rules {
+        ruleId: rule_id
+        field
+        operator
+        value
+        valueType: value_type
+        ruleGroup: rule_group
+      }
+    }
   }
 `;

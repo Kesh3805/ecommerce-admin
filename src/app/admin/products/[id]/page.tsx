@@ -26,6 +26,7 @@ import {
   ARCHIVE_PRODUCT,
   GET_PRODUCTS,
 } from '@/graphql/operations';
+import { COUNTRY_OPTIONS } from '@/lib/countries';
 import { ProductMediaItem, ProductMediaUploader } from '@/components/products';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -124,6 +125,7 @@ interface Product {
     handle?: string;
   };
   publishedAt?: string;
+  country_codes?: string[];
   options: ProductOption[];
   variants?: Variant[];
   categories?: { id: string; name: string }[];
@@ -686,6 +688,8 @@ export default function ProductDetailPage({
   const [mediaSuccessMessage, setMediaSuccessMessage] = useState<string | null>(null);
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [hasUnsavedMediaChanges, setHasUnsavedMediaChanges] = useState(false);
+  const [hasUnsavedCountryChanges, setHasUnsavedCountryChanges] = useState(false);
+  const [selectedCountryCodes, setSelectedCountryCodes] = useState<string[]>([]);
 
   useEffect(() => {
     const mapped: ProductMediaItem[] = (mediaData?.productMedia || []).map((item, index) => {
@@ -735,6 +739,18 @@ export default function ProductDetailPage({
     });
   }, [product, reset]);
 
+  useEffect(() => {
+    if (!product) {
+      return;
+    }
+
+    const fromProduct = product.country_codes?.map((code) => code.toUpperCase()) ?? [];
+    const fallback = COUNTRY_OPTIONS.map((country) => country.code);
+    const next = fromProduct.length > 0 ? fromProduct : fallback;
+    setSelectedCountryCodes([...new Set(next)].sort());
+    setHasUnsavedCountryChanges(false);
+  }, [product]);
+
   const [updateProduct, { loading: updating }] = useMutation(UPDATE_PRODUCT);
   const [deleteProduct, { loading: deleting }] = useMutation(DELETE_PRODUCT, {
     refetchQueries: [{ query: GET_PRODUCTS, variables: { pagination: { page: 1, limit: 50 } } }],
@@ -756,6 +772,11 @@ export default function ProductDetailPage({
     const seoDescription = formData.seoDescription?.trim() || undefined;
 
     try {
+      if (selectedCountryCodes.length === 0) {
+        setSaveError('Select at least one country for product availability.');
+        return;
+      }
+
       await updateProduct({
         variables: {
           input: {
@@ -763,6 +784,7 @@ export default function ProductDetailPage({
             title: formData.title,
             description: formData.description || undefined,
             brand: formData.brand || undefined,
+            country_codes: selectedCountryCodes,
             ...(seoHandle
               ? {
                   seo: {
@@ -778,6 +800,7 @@ export default function ProductDetailPage({
 
       await Promise.allSettled([refetch(), refetchVariants()]);
       setHasUnsavedMediaChanges(false);
+      setHasUnsavedCountryChanges(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to save product.';
       setSaveError(message);
@@ -1016,7 +1039,7 @@ export default function ProductDetailPage({
               Archive
             </Button>
           )}
-          <Button onClick={handleSubmit(onSubmit)} disabled={updating || (!isDirty && !hasUnsavedMediaChanges)}>
+          <Button onClick={handleSubmit(onSubmit)} disabled={updating || (!isDirty && !hasUnsavedMediaChanges && !hasUnsavedCountryChanges)}>
             {updating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             <Save className="mr-2 h-4 w-4" />
             Save
@@ -1069,6 +1092,36 @@ export default function ProductDetailPage({
                   <div className="space-y-2">
                     <Label>Category</Label>
                     <p className="text-sm">{product.categories?.[0]?.name || 'No category'}</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Country Availability</Label>
+                    <div className="grid max-h-52 grid-cols-1 gap-2 overflow-auto rounded-md border p-2">
+                      {COUNTRY_OPTIONS.map((country) => {
+                        const checked = selectedCountryCodes.includes(country.code);
+
+                        return (
+                          <label key={country.code} className="flex items-center gap-2 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => {
+                                setHasUnsavedCountryChanges(true);
+                                setSelectedCountryCodes((current) => {
+                                  if (current.includes(country.code)) {
+                                    return current.filter((item) => item !== country.code);
+                                  }
+
+                                  return [...current, country.code].sort();
+                                });
+                              }}
+                              className="h-4 w-4"
+                            />
+                            <span>{country.code}</span>
+                            <span className="text-muted-foreground">{country.name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
                   </div>
                 </CardContent>
               </Card>

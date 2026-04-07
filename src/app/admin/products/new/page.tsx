@@ -19,6 +19,7 @@ import {
   GET_PRODUCTS,
   SET_INVENTORY_LEVEL,
 } from '@/graphql/operations';
+import { COUNTRY_OPTIONS } from '@/lib/countries';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -56,6 +57,7 @@ interface BackendCategory {
   id: number;
   name: string;
   slug: string;
+  metadata?: unknown;
 }
 
 interface GetCategoriesResponse {
@@ -80,6 +82,43 @@ function slugify(input: string) {
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
+}
+
+function parseCategoryMetafields(metadata: unknown): Array<{ key: string; label: string; type: 'text' | 'textarea' }> {
+  if (!metadata) {
+    return [];
+  }
+
+  const parsed = typeof metadata === 'string' ? (() => {
+    try {
+      return JSON.parse(metadata) as unknown;
+    } catch {
+      return null;
+    }
+  })() : metadata;
+
+  const raw = (parsed as { metafields?: unknown } | null)?.metafields;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  return raw
+    .map((entry) => {
+      const key = typeof (entry as { key?: unknown }).key === 'string' ? (entry as { key: string }).key.trim() : '';
+      if (!key) {
+        return null;
+      }
+
+      const labelCandidate = (entry as { label?: unknown }).label;
+      const typeCandidate = (entry as { type?: unknown }).type;
+
+      return {
+        key,
+        label: typeof labelCandidate === 'string' && labelCandidate.trim().length > 0 ? labelCandidate : key,
+        type: typeCandidate === 'textarea' ? 'textarea' : 'text',
+      };
+    })
+    .filter((entry): entry is { key: string; label: string; type: 'text' | 'textarea' } => entry !== null);
 }
 
 export default function NewProductPage() {
@@ -114,6 +153,9 @@ export default function NewProductPage() {
   const [optionGroups, setOptionGroups] = useState<OptionGroup[]>([]);
   const [variantRows, setVariantRows] = useState<VariantRow[]>([]);
   const [metafieldValues, setMetafieldValues] = useState<Record<string, string>>({});
+  const [selectedCountryCodes, setSelectedCountryCodes] = useState<string[]>(
+    COUNTRY_OPTIONS.map((country) => country.code),
+  );
 
   const { data: categoriesData, error: categoriesError } = useQuery<GetCategoriesResponse>(GET_CATEGORIES, {
     variables: { storeId },
@@ -129,7 +171,7 @@ export default function NewProductPage() {
     ...(categoriesData?.categories || []).map((category) => ({
       id: String(category.id),
       label: category.name,
-      metafields: [],
+      metafields: parseCategoryMetafields(category.metadata),
     })),
   ];
 
@@ -173,6 +215,17 @@ export default function NewProductPage() {
     const parsedCategoryId = Number(data.categoryId);
     const categoryIds = Number.isInteger(parsedCategoryId) && parsedCategoryId > 0 ? [parsedCategoryId] : undefined;
     const computedHandle = data.seoHandle?.trim() || slugify(data.title);
+    if (selectedCountryCodes.length === 0) {
+      setError('root', { message: 'Select at least one country for product availability.' });
+      return;
+    }
+
+    const normalizedMetafields = Object.entries(metafieldValues)
+      .map(([key, value]) => ({
+        key: key.trim(),
+        value: value.trim(),
+      }))
+      .filter((entry) => entry.key.length > 0 && entry.value.length > 0);
 
     try {
       const created = await createProduct({
@@ -189,6 +242,8 @@ export default function NewProductPage() {
               meta_title: data.seoTitle || undefined,
               meta_description: data.seoDescription || undefined,
             },
+            metafields: normalizedMetafields.length > 0 ? normalizedMetafields : undefined,
+            country_codes: selectedCountryCodes,
           },
         },
       });
@@ -339,6 +394,38 @@ export default function NewProductPage() {
               onCategoryChange={(categoryId) => setValue('categoryId', categoryId, { shouldDirty: true })}
             />
             <ProductSEOCard register={register} />
+            <div className="rounded-xl border bg-card p-4">
+              <h3 className="text-sm font-semibold">Country Availability</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Product will be visible only in selected storefront countries.
+              </p>
+              <div className="mt-3 grid max-h-56 grid-cols-1 gap-2 overflow-auto text-sm">
+                {COUNTRY_OPTIONS.map((country) => {
+                  const checked = selectedCountryCodes.includes(country.code);
+
+                  return (
+                    <label key={country.code} className="flex items-center gap-2 rounded-md border px-2 py-1.5">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          setSelectedCountryCodes((current) => {
+                            if (current.includes(country.code)) {
+                              return current.filter((item) => item !== country.code);
+                            }
+
+                            return [...current, country.code].sort();
+                          });
+                        }}
+                        className="h-4 w-4"
+                      />
+                      <span>{country.code}</span>
+                      <span className="text-muted-foreground">{country.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
           </>
         )}
       />
