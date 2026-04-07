@@ -11,11 +11,12 @@ import { ProductMediaItem } from '@/components/products/types';
 interface ProductMediaUploaderProps {
   media: ProductMediaItem[];
   onChange: (media: ProductMediaItem[]) => void;
+  onUploadFiles?: (files: File[]) => Promise<void> | void;
 }
 
-export function ProductMediaUploader({ media, onChange }: ProductMediaUploaderProps) {
+export function ProductMediaUploader({ media, onChange, onUploadFiles }: ProductMediaUploaderProps) {
   const onDrop = useCallback(
-    (acceptedFiles: File[]) => {
+    async (acceptedFiles: File[]) => {
       const nextMedia = acceptedFiles.map((file) => ({
         id: crypto.randomUUID(),
         url: URL.createObjectURL(file),
@@ -24,8 +25,12 @@ export function ProductMediaUploader({ media, onChange }: ProductMediaUploaderPr
       }));
 
       onChange([...media, ...nextMedia]);
+
+      if (onUploadFiles) {
+        await onUploadFiles(acceptedFiles);
+      }
     },
-    [media, onChange]
+    [media, onChange, onUploadFiles]
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({

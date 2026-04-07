@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useState } from 'react';
+import { use, useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation } from '@apollo/client/react';
 import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
@@ -11,14 +11,21 @@ import Link from 'next/link';
 
 import {
   GET_PRODUCT,
+  GET_VARIANTS,
+  GET_PRODUCT_MEDIA,
   UPDATE_PRODUCT,
   DELETE_PRODUCT,
   ADD_PRODUCT_OPTION,
   GENERATE_VARIANTS,
+  UPDATE_VARIANT,
+  ATTACH_PRODUCT_MEDIA,
+  SET_INVENTORY_LEVEL,
+  GET_LOCATIONS,
   PUBLISH_PRODUCT,
   ARCHIVE_PRODUCT,
   GET_PRODUCTS,
 } from '@/graphql/operations';
+import { ProductMediaItem, ProductMediaUploader } from '@/components/products';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -78,19 +85,34 @@ interface ProductOption {
 }
 
 interface Variant {
-  id: string;
+  id: number;
   title: string;
-  sku: string;
-  price: number;
+  option1_value?: string;
+  option2_value?: string;
+  option3_value?: string;
+  sku?: string;
+  price?: number;
   compareAtPrice?: number;
   weight?: number;
   inventoryPolicy: string;
+  inventoryItemId?: number;
+  inventory_item?: {
+    id: number;
+    total_available?: number;
+  };
   optionValues?: { id: string; value: string; option: { id: string; name: string } }[];
   createdAt: string;
 }
 
+interface Location {
+  location_id: number;
+  name: string;
+  is_active: boolean;
+}
+
 interface Product {
   id: number;
+  storeId: number;
   title: string;
   description?: string;
   status: 'DRAFT' | 'ACTIVE' | 'ARCHIVED';
@@ -102,11 +124,37 @@ interface Product {
   };
   publishedAt?: string;
   options: ProductOption[];
-  variants: Variant[];
-  media: { id: string; url: string; altText?: string; position: number; isCover: boolean }[];
-  category?: { id: string; name: string };
+  variants?: Variant[];
+  categories?: { id: string; name: string }[];
   createdAt: string;
   updatedAt: string;
+}
+
+interface ProductMediaRecord {
+  id: number;
+  url: string;
+  altText?: string;
+  position: number;
+  isCover: boolean;
+}
+
+function toAbsoluteMediaUrl(url: string): string {
+  if (!url) {
+    return url;
+  }
+
+  if (/^https?:\/\//i.test(url) || url.startsWith('blob:') || url.startsWith('data:')) {
+    return url;
+  }
+
+  const graphQlUrl = process.env.NEXT_PUBLIC_GRAPHQL_URL || 'http://localhost:4100/graphql';
+
+  try {
+    const origin = new URL(graphQlUrl).origin;
+    return url.startsWith('/') ? `${origin}${url}` : `${origin}/${url}`;
+  } catch {
+    return url;
+  }
 }
 
 function ProductStatusBadge({ status }: { status: string }) {
@@ -254,11 +302,13 @@ function OptionEditor({
 
 function VariantsTable({
   productId,
+  storeId,
   variants,
   options,
   onVariantsGenerated,
 }: {
   productId: number;
+  storeId: number;
   variants: Variant[];
   options: ProductOption[];
   onVariantsGenerated: () => void;
@@ -268,6 +318,148 @@ function VariantsTable({
       onVariantsGenerated();
     },
   });
+
+  const [updateVariant] = useMutation(UPDATE_VARIANT);
+  const [setInventoryLevel] = useMutation(SET_INVENTORY_LEVEL);
+
+  const { data: locationsData } = useQuery<{ locations: Location[] }>(GET_LOCATIONS, {
+    variables: { storeId },
+    skip: !Number.isInteger(storeId),
+  });
+
+  const activeLocationId = useMemo(() => {
+    const locations = locationsData?.locations || [];
+    const active = locations.find((location) => location.is_active);
+    return active?.location_id ?? locations[0]?.location_id;
+  }, [locationsData]);
+
+  const [editableVariants, setEditableVariants] = useState<Record<number, {
+    sku: string;
+    price: string;
+    compareAtPrice: string;
+    inventoryPolicy: 'DENY' | 'CONTINUE';
+    inventory: string;
+    saving: boolean;
+    error?: string;
+  }>>({});
+
+  useEffect(() => {
+    const nextState: Record<number, {
+      sku: string;
+      price: string;
+      compareAtPrice: string;
+      inventoryPolicy: 'DENY' | 'CONTINUE';
+      inventory: string;
+      saving: boolean;
+      error?: string;
+    }> = {};
+
+    for (const variant of variants) {
+      nextState[variant.id] = {
+        sku: variant.sku || '',
+        price: Number.isFinite(variant.price) ? String(variant.price) : '',
+        compareAtPrice: Number.isFinite(variant.compareAtPrice) ? String(variant.compareAtPrice) : '',
+        inventoryPolicy: variant.inventoryPolicy === 'CONTINUE' ? 'CONTINUE' : 'DENY',
+        inventory: Number.isFinite(variant.inventory_item?.total_available)
+          ? String(variant.inventory_item?.total_available)
+          : '0',
+        saving: false,
+      };
+    }
+
+    setEditableVariants(nextState);
+  }, [variants]);
+
+  const updateEditableVariant = (
+    variantId: number,
+    updater: (current: {
+      sku: string;
+      price: string;
+      compareAtPrice: string;
+      inventoryPolicy: 'DENY' | 'CONTINUE';
+      inventory: string;
+      saving: boolean;
+      error?: string;
+    }) => {
+      sku: string;
+      price: string;
+      compareAtPrice: string;
+      inventoryPolicy: 'DENY' | 'CONTINUE';
+      inventory: string;
+      saving: boolean;
+      error?: string;
+    },
+  ) => {
+    setEditableVariants((current) => {
+      const existing = current[variantId];
+      if (!existing) return current;
+
+      return {
+        ...current,
+        [variantId]: updater(existing),
+      };
+    });
+  };
+
+  const handleSaveVariant = async (variant: Variant) => {
+    const draft = editableVariants[variant.id];
+    if (!draft) {
+      return;
+    }
+
+    const parsedPrice = draft.price.trim().length > 0 ? Number(draft.price) : undefined;
+    const parsedCompareAt = draft.compareAtPrice.trim().length > 0 ? Number(draft.compareAtPrice) : undefined;
+    const parsedInventory = Number(draft.inventory);
+
+    if (parsedPrice !== undefined && (!Number.isFinite(parsedPrice) || parsedPrice < 0)) {
+      updateEditableVariant(variant.id, (current) => ({ ...current, error: 'Price must be a valid non-negative number.' }));
+      return;
+    }
+
+    if (parsedCompareAt !== undefined && (!Number.isFinite(parsedCompareAt) || parsedCompareAt < 0)) {
+      updateEditableVariant(variant.id, (current) => ({ ...current, error: 'Compare-at must be a valid non-negative number.' }));
+      return;
+    }
+
+    if (!Number.isFinite(parsedInventory) || parsedInventory < 0) {
+      updateEditableVariant(variant.id, (current) => ({ ...current, error: 'Inventory must be a valid non-negative number.' }));
+      return;
+    }
+
+    updateEditableVariant(variant.id, (current) => ({ ...current, saving: true, error: undefined }));
+
+    try {
+      await updateVariant({
+        variables: {
+          input: {
+            variant_id: variant.id,
+            sku: draft.sku || undefined,
+            price: parsedPrice,
+            compare_at_price: parsedCompareAt,
+            inventory_policy: draft.inventoryPolicy,
+          },
+        },
+      });
+
+      if (variant.inventoryItemId && activeLocationId) {
+        await setInventoryLevel({
+          variables: {
+            input: {
+              inventory_item_id: variant.inventoryItemId,
+              location_id: activeLocationId,
+              available_quantity: parsedInventory,
+            },
+          },
+        });
+      }
+
+      updateEditableVariant(variant.id, (current) => ({ ...current, saving: false, error: undefined }));
+      onVariantsGenerated();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save variant changes.';
+      updateEditableVariant(variant.id, (current) => ({ ...current, saving: false, error: message }));
+    }
+  };
 
   const handleGenerateVariants = async () => {
     await generateVariants({
@@ -310,32 +502,134 @@ function VariantsTable({
               : 'Click "Generate Variants" to create variants from your options.'}
           </p>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Variant</TableHead>
-                <TableHead>SKU</TableHead>
-                <TableHead>Price</TableHead>
-                <TableHead>Compare At</TableHead>
-                <TableHead>Inventory</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {variants.map((variant) => (
-                <TableRow key={variant.id}>
-                  <TableCell className="font-medium">{variant.title}</TableCell>
-                  <TableCell>{variant.sku}</TableCell>
-                  <TableCell>₹{variant.price}</TableCell>
-                  <TableCell>
-                    {variant.compareAtPrice ? `₹${variant.compareAtPrice}` : '—'}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline">Track</Badge>
-                  </TableCell>
+          <>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Variant</TableHead>
+                  <TableHead>SKU</TableHead>
+                  <TableHead>Price</TableHead>
+                  <TableHead>Compare At</TableHead>
+                  <TableHead>Policy</TableHead>
+                  <TableHead>Inventory</TableHead>
+                  <TableHead className="w-32">Action</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {variants.map((variant) => (
+                  <TableRow key={variant.id}>
+                  <TableCell className="font-medium">{variant.title}</TableCell>
+                  <TableCell>
+                    <Input
+                      value={editableVariants[variant.id]?.sku ?? ''}
+                      onChange={(event) =>
+                        updateEditableVariant(variant.id, (current) => ({
+                          ...current,
+                          sku: event.target.value,
+                          error: undefined,
+                        }))
+                      }
+                      className="w-40"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={editableVariants[variant.id]?.price ?? ''}
+                      onChange={(event) =>
+                        updateEditableVariant(variant.id, (current) => ({
+                          ...current,
+                          price: event.target.value,
+                          error: undefined,
+                        }))
+                      }
+                      className="w-32"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={editableVariants[variant.id]?.compareAtPrice ?? ''}
+                      onChange={(event) =>
+                        updateEditableVariant(variant.id, (current) => ({
+                          ...current,
+                          compareAtPrice: event.target.value,
+                          error: undefined,
+                        }))
+                      }
+                      className="w-32"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Select
+                      value={editableVariants[variant.id]?.inventoryPolicy ?? 'DENY'}
+                      onValueChange={(value) =>
+                        updateEditableVariant(variant.id, (current) => ({
+                          ...current,
+                          inventoryPolicy: value === 'CONTINUE' ? 'CONTINUE' : 'DENY',
+                          error: undefined,
+                        }))
+                      }
+                    >
+                      <SelectTrigger className="w-36">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="DENY">Deny</SelectItem>
+                        <SelectItem value="CONTINUE">Continue</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </TableCell>
+                  <TableCell>
+                    <Input
+                      type="number"
+                      min={0}
+                      step="1"
+                      value={editableVariants[variant.id]?.inventory ?? '0'}
+                      onChange={(event) =>
+                        updateEditableVariant(variant.id, (current) => ({
+                          ...current,
+                          inventory: event.target.value,
+                          error: undefined,
+                        }))
+                      }
+                      className="w-24"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      size="sm"
+                      onClick={() => handleSaveVariant(variant)}
+                      disabled={editableVariants[variant.id]?.saving}
+                    >
+                      {editableVariants[variant.id]?.saving ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        'Save'
+                      )}
+                    </Button>
+                  </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {variants.map((variant) => {
+              const errorMessage = editableVariants[variant.id]?.error;
+              if (!errorMessage) {
+                return null;
+              }
+
+              return (
+                <p key={`error-${variant.id}`} className="mt-2 text-sm text-destructive">
+                  {variant.title}: {errorMessage}
+                </p>
+              );
+            })}
+          </>
         )}
       </CardContent>
     </Card>
@@ -355,7 +649,46 @@ export default function ProductDetailPage({
     variables: { id: Number(id) },
   });
 
+  const {
+    data: variantsData,
+    loading: variantsLoading,
+    refetch: refetchVariants,
+  } = useQuery<{ variants: Variant[] }>(GET_VARIANTS, {
+    variables: { productId: Number(id) },
+    skip: !Number.isInteger(Number(id)),
+  });
+
+  const {
+    data: mediaData,
+    loading: mediaLoading,
+    refetch: refetchMedia,
+  } = useQuery<{ productMedia: ProductMediaRecord[] }>(GET_PRODUCT_MEDIA, {
+    variables: { productId: Number(id) },
+    skip: !Number.isInteger(Number(id)),
+  });
+
   const product = data?.product;
+  const productVariants = variantsData?.variants || product?.variants || [];
+  const [mediaItems, setMediaItems] = useState<ProductMediaItem[]>([]);
+  const [mediaUrlInput, setMediaUrlInput] = useState('');
+  const [mediaUploadError, setMediaUploadError] = useState<string | null>(null);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+
+  useEffect(() => {
+    const mapped: ProductMediaItem[] = (mediaData?.productMedia || []).map((item, index) => {
+      const absoluteUrl = toAbsoluteMediaUrl(item.url);
+      const fileName = absoluteUrl.split('/').pop() || `media-${item.id}`;
+
+      return {
+        id: String(item.id),
+        url: absoluteUrl,
+        name: fileName,
+        size: 0,
+      };
+    });
+
+    setMediaItems(mapped);
+  }, [mediaData]);
 
   const {
     register,
@@ -385,6 +718,7 @@ export default function ProductDetailPage({
   });
   const [publishProduct, { loading: publishing }] = useMutation(PUBLISH_PRODUCT);
   const [archiveProduct, { loading: archiving }] = useMutation(ARCHIVE_PRODUCT);
+  const [attachProductMedia, { loading: attachingMedia }] = useMutation(ATTACH_PRODUCT_MEDIA);
 
   const onSubmit = async (formData: ProductFormData) => {
     await updateProduct({
@@ -402,22 +736,103 @@ export default function ProductDetailPage({
         },
       },
     });
-    refetch();
+    await Promise.all([refetch(), refetchVariants()]);
   };
 
   const handlePublish = async () => {
     await publishProduct({ variables: { id: Number(id) } });
-    refetch();
+    await Promise.all([refetch(), refetchVariants()]);
   };
 
   const handleArchive = async () => {
     await archiveProduct({ variables: { id: Number(id) } });
-    refetch();
+    await Promise.all([refetch(), refetchVariants()]);
   };
 
   const handleDelete = async () => {
     if (confirm('Are you sure you want to delete this product?')) {
       await deleteProduct({ variables: { id: Number(id) } });
+    }
+  };
+
+  const handleAttachMediaByUrl = async () => {
+    const url = mediaUrlInput.trim();
+    if (!url) {
+      return;
+    }
+
+    await attachProductMedia({
+      variables: {
+        input: {
+          product_id: Number(id),
+          url: toAbsoluteMediaUrl(url),
+          type: 'IMAGE',
+          position: (mediaData?.productMedia?.length || 0) + 1,
+          is_cover: (mediaData?.productMedia?.length || 0) === 0,
+        },
+      },
+    });
+
+    setMediaUrlInput('');
+    await refetchMedia();
+  };
+
+  const handleUploadFiles = async (files: File[]) => {
+    if (!files.length) {
+      return;
+    }
+
+    setMediaUploadError(null);
+    setUploadingFiles(true);
+
+    try {
+      const graphQlUrl = process.env.NEXT_PUBLIC_GRAPHQL_URL || 'http://localhost:4100/graphql';
+      const apiBaseUrl = new URL(graphQlUrl).origin;
+      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_access_token') : null;
+
+      let currentPosition = (mediaData?.productMedia?.length || 0) + 1;
+
+      for (const file of files) {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const uploadResponse = await fetch(`${apiBaseUrl}/api/media/upload`, {
+          method: 'POST',
+          body: formData,
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
+
+        if (!uploadResponse.ok) {
+          const errorText = await uploadResponse.text();
+          throw new Error(errorText || `Failed to upload ${file.name}`);
+        }
+
+        const uploadResult = (await uploadResponse.json()) as { url?: string };
+        if (!uploadResult.url) {
+          throw new Error(`Upload endpoint did not return a URL for ${file.name}`);
+        }
+
+        await attachProductMedia({
+          variables: {
+            input: {
+              product_id: Number(id),
+              url: toAbsoluteMediaUrl(uploadResult.url),
+              type: 'IMAGE',
+              position: currentPosition,
+              is_cover: currentPosition === 1,
+            },
+          },
+        });
+
+        currentPosition += 1;
+      }
+
+      await refetchMedia();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'File upload failed.';
+      setMediaUploadError(message);
+    } finally {
+      setUploadingFiles(false);
     }
   };
 
@@ -478,11 +893,18 @@ export default function ProductDetailPage({
         </div>
         <ProductStatusBadge status={product.status} />
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            nativeButton={false}
+            render={<Link href={`/admin/products/${product.id}/preview`} />}
+          >
+            Preview
+          </Button>
           {product.status === 'DRAFT' && (
             <Button
               variant="outline"
               onClick={handlePublish}
-              disabled={publishing || product.variants.length === 0}
+              disabled={publishing || variantsLoading || productVariants.length === 0}
             >
               {publishing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Publish
@@ -545,7 +967,7 @@ export default function ProductDetailPage({
                   </div>
                   <div className="space-y-2">
                     <Label>Category</Label>
-                    <p className="text-sm">{product.category?.name || 'No category'}</p>
+                    <p className="text-sm">{product.categories?.[0]?.name || 'No category'}</p>
                   </div>
                 </CardContent>
               </Card>
@@ -579,9 +1001,13 @@ export default function ProductDetailPage({
           />
           <VariantsTable
             productId={product.id}
-            variants={product.variants}
+            storeId={product.storeId}
+            variants={productVariants}
             options={product.options}
-            onVariantsGenerated={() => refetch()}
+            onVariantsGenerated={() => {
+              refetch();
+              refetchVariants();
+            }}
           />
         </TabsContent>
 
@@ -590,37 +1016,33 @@ export default function ProductDetailPage({
             <CardHeader>
               <CardTitle>Product Media</CardTitle>
               <CardDescription>
-                Upload images for your product
+                Drag and drop images for preview, or attach image URLs to persist media
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-4 gap-4 mb-4">
-                {product.media.map((m) => (
-                  <div
-                    key={m.id}
-                    className="aspect-square rounded-lg border overflow-hidden relative"
+            <CardContent className="space-y-4">
+              <ProductMediaUploader media={mediaItems} onChange={setMediaItems} onUploadFiles={handleUploadFiles} />
+              <div className="space-y-2">
+                <Label htmlFor="media-url">Attach by image URL</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="media-url"
+                    placeholder="https://example.com/product-image.jpg"
+                    value={mediaUrlInput}
+                    onChange={(event) => setMediaUrlInput(event.target.value)}
+                  />
+                  <Button
+                    type="button"
+                    onClick={handleAttachMediaByUrl}
+                    disabled={attachingMedia || uploadingFiles || mediaUrlInput.trim().length === 0}
                   >
-                    <img
-                      src={m.url}
-                      alt={m.altText || ''}
-                      className="w-full h-full object-cover"
-                    />
-                    {m.isCover && (
-                      <Badge className="absolute top-2 left-2" variant="secondary">
-                        Cover
-                      </Badge>
-                    )}
-                  </div>
-                ))}
+                    {attachingMedia && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Attach URL
+                  </Button>
+                </div>
               </div>
-              <div className="border-2 border-dashed rounded-lg p-8 text-center">
-                <p className="text-sm text-muted-foreground mb-2">
-                  Drag and drop images here
-                </p>
-                <Button variant="outline" size="sm">
-                  Upload Images
-                </Button>
-              </div>
+              {uploadingFiles && <p className="text-sm text-muted-foreground">Uploading files...</p>}
+              {mediaLoading && <p className="text-sm text-muted-foreground">Loading media...</p>}
+              {mediaUploadError && <p className="text-sm text-destructive">{mediaUploadError}</p>}
             </CardContent>
           </Card>
         </TabsContent>

@@ -1,9 +1,9 @@
 'use client';
 
-import { useQuery } from '@apollo/client/react';
+import { useMutation, useQuery } from '@apollo/client/react';
 import Link from 'next/link';
 import { Plus, Search, MoreHorizontal } from 'lucide-react';
-import { GET_PRODUCTS } from '@/graphql/operations';
+import { DELETE_PRODUCT, GET_PRODUCTS } from '@/graphql/operations';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -84,6 +84,18 @@ export default function ProductsPage() {
 
   const products: Product[] = data?.products?.items || [];
 
+  const [deleteProduct, { loading: deleting }] = useMutation(DELETE_PRODUCT, {
+    refetchQueries: [{ query: GET_PRODUCTS, variables: { filter: { store_id: storeId }, pagination: { page: 1, limit: 50 } } }],
+  });
+
+  const handleDeleteProduct = async (productId: number) => {
+    if (!confirm('Are you sure you want to delete this product?')) {
+      return;
+    }
+
+    await deleteProduct({ variables: { id: productId } });
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between rounded-2xl border bg-linear-to-r from-primary/10 via-secondary/30 to-muted px-6 py-5">
@@ -163,7 +175,9 @@ export default function ProductsPage() {
                           <div className="h-10 w-10 rounded-md border bg-primary/10 text-primary flex items-center justify-center overflow-hidden">
                             <span className="text-xs font-semibold">PRD</span>
                           </div>
-                          <span className="font-medium">{product.title}</span>
+                          <Link href={`/admin/products/${product.id}`} className="font-medium hover:underline">
+                            {product.title}
+                          </Link>
                         </div>
                       </TableCell>
                       <TableCell>
@@ -184,7 +198,23 @@ export default function ProductsPage() {
                             <MoreHorizontal className="h-4 w-4" />
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem className="text-destructive">
+                            <DropdownMenuItem
+                              nativeButton={false}
+                              render={<Link href={`/admin/products/${product.id}`} />}
+                            >
+                              Edit
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              nativeButton={false}
+                              render={<Link href={`/admin/products/${product.id}/preview`} />}
+                            >
+                              Preview
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="text-destructive"
+                              disabled={deleting}
+                              onClick={() => handleDeleteProduct(product.id)}
+                            >
                               Delete
                             </DropdownMenuItem>
                           </DropdownMenuContent>

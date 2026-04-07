@@ -13,6 +13,7 @@ export const LOGIN = gql`
 export const PRODUCT_FRAGMENT = gql`
   fragment ProductFields on Product {
     id: product_id
+    storeId: store_id
     title
     description
     status
@@ -38,22 +39,6 @@ export const PRODUCT_FRAGMENT = gql`
         id: value_id
         value
         position
-      }
-    }
-    variants {
-      id: variant_id
-      title
-      sku
-      price
-      compareAtPrice: compare_at_price
-      inventoryPolicy: inventory_policy
-      inventoryItemId: inventory_item_id
-      inventory_item {
-        id: inventory_item_id
-        total_available
-        levels {
-          available_quantity
-        }
       }
     }
   }
@@ -160,6 +145,9 @@ export const GET_VARIANTS = gql`
     variants(productId: $productId) {
       id: variant_id
       title
+      option1_value
+      option2_value
+      option3_value
       sku
       price
       compareAtPrice: compare_at_price
@@ -298,7 +286,33 @@ export const GET_CATEGORIES = gql`
       name
       slug
       parent_id
-      metadata
+    }
+  }
+`;
+
+export const ATTACH_PRODUCT_MEDIA = gql`
+  mutation AttachProductMedia($input: AttachProductMediaInput!) {
+    attachProductMedia(input: $input) {
+      id: media_id
+      product_id
+      url
+      altText: alt_text
+      position
+      isCover: is_cover
+      type
+    }
+  }
+`;
+
+export const GET_PRODUCT_MEDIA = gql`
+  query GetProductMedia($productId: Int!) {
+    productMedia(productId: $productId) {
+      id: media_id
+      url
+      altText: alt_text
+      position
+      isCover: is_cover
+      type
     }
   }
 `;

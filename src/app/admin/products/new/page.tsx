@@ -55,7 +55,6 @@ interface BackendCategory {
   id: number;
   name: string;
   slug: string;
-  metadata?: string | null;
 }
 
 interface GetCategoriesResponse {
@@ -76,26 +75,6 @@ function slugify(input: string) {
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
-}
-
-function parseCategoryMetafields(metadata?: string | null) {
-  if (!metadata) return [] as CategoryOption['metafields'];
-
-  try {
-    const parsedMetadata = JSON.parse(metadata) as Array<{ key?: string; label?: string; type?: string }>;
-
-    if (!Array.isArray(parsedMetadata)) return [];
-
-    return parsedMetadata
-      .filter((item) => item?.key && item?.label)
-      .map((item) => ({
-        key: String(item.key),
-        label: String(item.label),
-        type: item.type === 'textarea' ? ('textarea' as const) : ('text' as const),
-      })) as CategoryOption['metafields'];
-  } catch {
-    return [];
-  }
 }
 
 export default function NewProductPage() {
@@ -142,7 +121,7 @@ export default function NewProductPage() {
     ...(categoriesData?.categories || []).map((category) => ({
       id: String(category.id),
       label: category.name,
-      metafields: parseCategoryMetafields(category.metadata),
+      metafields: [],
     })),
   ];
 
