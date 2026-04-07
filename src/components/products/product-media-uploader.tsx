@@ -12,9 +12,10 @@ interface ProductMediaUploaderProps {
   media: ProductMediaItem[];
   onChange: (media: ProductMediaItem[]) => void;
   onUploadFiles?: (files: File[]) => Promise<void> | void;
+  onRemoveMedia?: (mediaId: string) => Promise<void> | void;
 }
 
-export function ProductMediaUploader({ media, onChange, onUploadFiles }: ProductMediaUploaderProps) {
+export function ProductMediaUploader({ media, onChange, onUploadFiles, onRemoveMedia }: ProductMediaUploaderProps) {
   // Track blob URLs for cleanup to prevent memory leaks
   const blobUrlsRef = useRef<Set<string>>(new Set());
 
@@ -60,7 +61,12 @@ export function ProductMediaUploader({ media, onChange, onUploadFiles }: Product
     },
   });
 
-  const removeMedia = (id: string) => {
+  const removeMedia = async (id: string) => {
+    if (onRemoveMedia) {
+      await onRemoveMedia(id);
+      return;
+    }
+
     const itemToRemove = media.find((item) => item.id === id);
     if (itemToRemove) {
       // Revoke the blob URL if it's a blob URL
@@ -97,7 +103,7 @@ export function ProductMediaUploader({ media, onChange, onUploadFiles }: Product
                 <img src={item.url} alt={item.name} className="h-28 w-full object-cover" />
                 <div className="flex items-center justify-between p-2">
                   <p className="truncate text-xs">{item.name}</p>
-                  <Button type="button" size="icon-xs" variant="ghost" onClick={() => removeMedia(item.id)}>
+                  <Button type="button" size="icon-xs" variant="ghost" onClick={() => void removeMedia(item.id)}>
                     <X className="h-3 w-3" />
                   </Button>
                 </div>

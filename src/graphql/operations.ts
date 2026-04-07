@@ -336,3 +336,9 @@ export const GET_PRODUCT_MEDIA = gql`
     }
   }
 `;
+
+export const DELETE_PRODUCT_MEDIA = gql`
+  mutation DeleteProductMedia($mediaId: Int!) {
+    deleteProductMedia(mediaId: $mediaId)
+  }
+`;

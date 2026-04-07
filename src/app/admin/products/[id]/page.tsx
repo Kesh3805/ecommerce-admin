@@ -19,6 +19,7 @@ import {
   GENERATE_VARIANTS,
   UPDATE_VARIANT,
   ATTACH_PRODUCT_MEDIA,
+  DELETE_PRODUCT_MEDIA,
   SET_INVENTORY_LEVEL,
   GET_LOCATIONS,
   PUBLISH_PRODUCT,
@@ -744,6 +745,7 @@ export default function ProductDetailPage({
   const [publishProduct, { loading: publishing }] = useMutation(PUBLISH_PRODUCT);
   const [archiveProduct, { loading: archiving }] = useMutation(ARCHIVE_PRODUCT);
   const [attachProductMedia, { loading: attachingMedia }] = useMutation(ATTACH_PRODUCT_MEDIA);
+  const [deleteProductMedia, { loading: deletingMedia }] = useMutation(DELETE_PRODUCT_MEDIA);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const onSubmit = async (formData: ProductFormData) => {
@@ -905,6 +907,32 @@ export default function ProductDetailPage({
       setMediaUploadError(message);
     } finally {
       setUploadingFiles(false);
+    }
+  };
+
+  const handleRemoveMedia = async (mediaId: string) => {
+    const parsedMediaId = Number(mediaId);
+    if (!Number.isFinite(parsedMediaId)) {
+      setMediaUploadError('Cannot remove unsaved media item.');
+      return;
+    }
+
+    setMediaUploadError(null);
+    setMediaSuccessMessage(null);
+
+    try {
+      await deleteProductMedia({
+        variables: {
+          mediaId: parsedMediaId,
+        },
+      });
+
+      await refetchMedia();
+      setMediaSuccessMessage('Media removed successfully.');
+      setHasUnsavedMediaChanges(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to remove media.';
+      setMediaUploadError(message);
     }
   };
 
@@ -1092,7 +1120,12 @@ export default function ProductDetailPage({
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <ProductMediaUploader media={mediaItems} onChange={setMediaItems} onUploadFiles={handleUploadFiles} />
+              <ProductMediaUploader
+                media={mediaItems}
+                onChange={setMediaItems}
+                onUploadFiles={handleUploadFiles}
+                onRemoveMedia={handleRemoveMedia}
+              />
               <div className="space-y-2">
                 <Label htmlFor="media-url">Attach by image URL</Label>
                 <div className="flex gap-2">
@@ -1105,7 +1138,7 @@ export default function ProductDetailPage({
                   <Button
                     type="button"
                     onClick={handleAttachMediaByUrl}
-                    disabled={attachingMedia || uploadingFiles || mediaUrlInput.trim().length === 0}
+                    disabled={attachingMedia || deletingMedia || uploadingFiles || mediaUrlInput.trim().length === 0}
                   >
                     {attachingMedia && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                     Attach URL
