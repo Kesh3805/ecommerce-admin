@@ -73,6 +73,26 @@ export const GET_PRODUCTS = gql`
   ${PRODUCT_LIST_FRAGMENT}
 `;
 
+export const GET_MY_STORES = gql`
+  query GetMyStores {
+    myStores {
+      store_id
+      name
+      owner_user_id
+    }
+  }
+`;
+
+export const GET_USERS_SUMMARY = gql`
+  query GetUsersSummary($input: GetUsersInput) {
+    users(input: $input) {
+      pagination {
+        total
+      }
+    }
+  }
+`;
+
 export const GET_PRODUCT = gql`
   query GetProduct($id: Int!) {
     product(id: $id) {

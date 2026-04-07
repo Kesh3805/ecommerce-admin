@@ -36,7 +36,7 @@ export default function LoginPage() {
   const {
     register,
     handleSubmit,
-    formState: { errors, isSubmitting },
+    formState: { errors },
     setError,
   } = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
@@ -56,12 +56,13 @@ export default function LoginPage() {
       });
 
       const token = response.data?.login?.accessToken;
+      const expiresIn = response.data?.login?.expiresIn;
       if (!token) {
         setError('root', { message: 'Login failed: token not returned' });
         return;
       }
 
-      setAuthToken(token);
+      setAuthToken(token, expiresIn);
       router.push('/admin');
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Invalid credentials';
@@ -113,8 +114,8 @@ export default function LoginPage() {
 
                 {errors.root && <p className="text-sm text-destructive">{errors.root.message}</p>}
 
-                <Button type="submit" className="w-full" disabled={loading || isSubmitting}>
-                  {(loading || isSubmitting) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <LogIn className="mr-2 h-4 w-4" />}
+                <Button type="submit" className="w-full" disabled={loading}>
+                  {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <LogIn className="mr-2 h-4 w-4" />}
                   Sign In
                 </Button>
                 <p className="text-center text-xs text-muted-foreground">

@@ -3,7 +3,7 @@
 import { useMutation, useQuery } from '@apollo/client/react';
 import Link from 'next/link';
 import { Plus, Search, MoreHorizontal } from 'lucide-react';
-import { DELETE_PRODUCT, GET_PRODUCTS } from '@/graphql/operations';
+import { DELETE_PRODUCT, GET_MY_STORES, GET_PRODUCTS } from '@/graphql/operations';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -37,6 +37,10 @@ interface GetProductsResponse {
   products: {
     items: Product[];
   };
+}
+
+interface MyStoresResponse {
+  myStores: Array<{ store_id: number; name: string }>;
 }
 
 function ProductStatusBadge({ status }: { status: string }) {
@@ -76,17 +80,19 @@ function ProductTableSkeleton() {
 }
 
 export default function ProductsPage() {
-  const storeId = Number(process.env.NEXT_PUBLIC_STORE_ID || 1);
+  const { data: myStoresData, loading: storesLoading } = useQuery<MyStoresResponse>(GET_MY_STORES);
 
   const { data, loading, error } = useQuery<GetProductsResponse>(GET_PRODUCTS, {
-    variables: { filter: { store_id: storeId }, pagination: { page: 1, limit: 50 } },
+    variables: { pagination: { page: 1, limit: 50 } },
   });
 
   const products: Product[] = data?.products?.items || [];
 
   const [deleteProduct, { loading: deleting }] = useMutation(DELETE_PRODUCT, {
-    refetchQueries: [{ query: GET_PRODUCTS, variables: { filter: { store_id: storeId }, pagination: { page: 1, limit: 50 } } }],
+    refetchQueries: [{ query: GET_PRODUCTS, variables: { pagination: { page: 1, limit: 50 } } }],
   });
+
+  const myStoreName = myStoresData?.myStores?.[0]?.name;
 
   const handleDeleteProduct = async (productId: number) => {
     if (!confirm('Are you sure you want to delete this product?')) {
@@ -103,7 +109,7 @@ export default function ProductsPage() {
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Catalog</p>
           <h1 className="text-3xl font-bold tracking-tight">Products</h1>
           <p className="text-muted-foreground">
-            Manage your product catalog
+            Manage your product catalog{myStoreName ? ` · ${myStoreName}` : ''}
           </p>
         </div>
         <Button nativeButton={false} render={<Link href="/admin/products/new" />}>
@@ -136,7 +142,7 @@ export default function ProductsPage() {
                 <TableHead className="w-10"></TableHead>
               </TableRow>
             </TableHeader>
-            {loading ? (
+            {loading || storesLoading ? (
               <ProductTableSkeleton />
             ) : error ? (
               <TableBody>

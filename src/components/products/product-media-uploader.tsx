@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { ImagePlus, X } from 'lucide-react';
 
@@ -15,20 +15,40 @@ interface ProductMediaUploaderProps {
 }
 
 export function ProductMediaUploader({ media, onChange, onUploadFiles }: ProductMediaUploaderProps) {
+  // Track blob URLs for cleanup to prevent memory leaks
+  const blobUrlsRef = useRef<Set<string>>(new Set());
+
+  // Cleanup blob URLs when component unmounts or media changes
+  useEffect(() => {
+    return () => {
+      // Revoke all blob URLs on unmount
+      blobUrlsRef.current.forEach((url) => {
+        URL.revokeObjectURL(url);
+      });
+      blobUrlsRef.current.clear();
+    };
+  }, []);
+
   const onDrop = useCallback(
     async (acceptedFiles: File[]) => {
-      const nextMedia = acceptedFiles.map((file) => ({
-        id: crypto.randomUUID(),
-        url: URL.createObjectURL(file),
-        name: file.name,
-        size: file.size,
-      }));
-
-      onChange([...media, ...nextMedia]);
-
       if (onUploadFiles) {
         await onUploadFiles(acceptedFiles);
+        return;
       }
+
+      const nextMedia = acceptedFiles.map((file) => {
+        const blobUrl = URL.createObjectURL(file);
+        // Track the blob URL for cleanup
+        blobUrlsRef.current.add(blobUrl);
+        return {
+          id: crypto.randomUUID(),
+          url: blobUrl,
+          name: file.name,
+          size: file.size,
+        };
+      });
+
+      onChange([...media, ...nextMedia]);
     },
     [media, onChange, onUploadFiles]
   );
@@ -41,6 +61,14 @@ export function ProductMediaUploader({ media, onChange, onUploadFiles }: Product
   });
 
   const removeMedia = (id: string) => {
+    const itemToRemove = media.find((item) => item.id === id);
+    if (itemToRemove) {
+      // Revoke the blob URL if it's a blob URL
+      if (itemToRemove.url.startsWith('blob:')) {
+        URL.revokeObjectURL(itemToRemove.url);
+        blobUrlsRef.current.delete(itemToRemove.url);
+      }
+    }
     onChange(media.filter((item) => item.id !== id));
   };
 

@@ -1,4 +1,5 @@
 'use client';
+/* eslint-disable @next/next/no-img-element */
 
 import { useMemo, useState } from 'react';
 import { use } from 'react';
@@ -7,6 +8,7 @@ import Link from 'next/link';
 import { ArrowLeft, Heart, Search, ShoppingBag, User } from 'lucide-react';
 
 import { GET_PRODUCT, GET_PRODUCT_MEDIA, GET_VARIANTS } from '@/graphql/operations';
+import { sanitizeHtml } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -121,7 +123,10 @@ export default function ProductPreviewPage({
   });
 
   const product = data?.product;
-  const variants = variantsData?.variants || product?.variants || [];
+  const variants = useMemo(
+    () => variantsData?.variants || product?.variants || [],
+    [variantsData?.variants, product?.variants],
+  );
   const media = (mediaData?.productMedia || [])
     .slice()
     .sort((a, b) => a.position - b.position)
@@ -161,8 +166,8 @@ export default function ProductPreviewPage({
       <div className="space-y-4">
         <Skeleton className="h-12 w-full" />
         <div className="grid gap-6 md:grid-cols-2">
-          <Skeleton className="h-[560px] w-full" />
-          <Skeleton className="h-[560px] w-full" />
+          <Skeleton className="h-140 w-full" />
+          <Skeleton className="h-140 w-full" />
         </div>
       </div>
     );
@@ -225,10 +230,10 @@ export default function ProductPreviewPage({
             <img
               src={displayImage.url || fallbackImage}
               alt={displayImage.altText || product.title}
-              className="h-full max-h-[620px] w-full object-cover"
+              className="h-full max-h-155 w-full object-cover"
             />
           ) : (
-            <img src={fallbackImage} alt={product.title} className="h-full max-h-[620px] w-full object-cover" />
+            <img src={fallbackImage} alt={product.title} className="h-full max-h-155 w-full object-cover" />
           )}
         </div>
 
@@ -295,7 +300,7 @@ export default function ProductPreviewPage({
             {product.description ? (
               <div
                 className="text-sm leading-6 text-foreground/90 [&_p]:mb-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5"
-                dangerouslySetInnerHTML={{ __html: product.description }}
+                dangerouslySetInnerHTML={{ __html: sanitizeHtml(product.description) }}
               />
             ) : (
               <p className="text-sm leading-6 text-foreground/90">No description available for this product.</p>

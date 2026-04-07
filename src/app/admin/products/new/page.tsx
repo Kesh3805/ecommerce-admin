@@ -15,6 +15,7 @@ import {
   CREATE_VARIANT,
   GET_CATEGORIES,
   GET_LOCATIONS,
+  GET_MY_STORES,
   GET_PRODUCTS,
   SET_INVENTORY_LEVEL,
 } from '@/graphql/operations';
@@ -61,6 +62,10 @@ interface GetCategoriesResponse {
   categories: BackendCategory[];
 }
 
+interface GetMyStoresResponse {
+  myStores: Array<{ store_id: number; name: string }>;
+}
+
 interface CreateVariantResponse {
   createVariant: {
     inventoryItemId?: number;
@@ -79,7 +84,9 @@ function slugify(input: string) {
 
 export default function NewProductPage() {
   const router = useRouter();
-  const storeId = Number(process.env.NEXT_PUBLIC_STORE_ID || 1);
+
+  const { data: myStoresData, loading: myStoresLoading } = useQuery<GetMyStoresResponse>(GET_MY_STORES);
+  const storeId = myStoresData?.myStores?.[0]?.store_id;
 
   const {
     control,
@@ -110,6 +117,7 @@ export default function NewProductPage() {
 
   const { data: categoriesData, error: categoriesError } = useQuery<GetCategoriesResponse>(GET_CATEGORIES, {
     variables: { storeId },
+    skip: !storeId,
   });
 
   const categoryOptions: CategoryOption[] = [
@@ -140,7 +148,7 @@ export default function NewProductPage() {
 
   const [createProduct, { loading }] = useMutation<{ createProduct: { id: number } }>(CREATE_PRODUCT, {
     refetchQueries: [
-      { query: GET_PRODUCTS, variables: { filter: { store_id: storeId }, pagination: { page: 1, limit: 50 } } },
+      { query: GET_PRODUCTS, variables: { pagination: { page: 1, limit: 50 } } },
     ],
   });
 
@@ -152,10 +160,16 @@ export default function NewProductPage() {
     GET_LOCATIONS,
     {
       variables: { storeId },
+      skip: !storeId,
     },
   );
 
   const onSubmit = async (data: ProductFormData) => {
+    if (!storeId) {
+      setError('root', { message: 'No accessible store found for your account.' });
+      return;
+    }
+
     const parsedCategoryId = Number(data.categoryId);
     const categoryIds = Number.isInteger(parsedCategoryId) && parsedCategoryId > 0 ? [parsedCategoryId] : undefined;
     const computedHandle = data.seoHandle?.trim() || slugify(data.title);
@@ -288,6 +302,10 @@ export default function NewProductPage() {
           Save Product
         </Button>
       </div>
+
+      {!myStoresLoading && !storeId && (
+        <p className="text-sm text-destructive">No accessible store found for your account.</p>
+      )}
 
       <ProductEditorLayout
         main={(

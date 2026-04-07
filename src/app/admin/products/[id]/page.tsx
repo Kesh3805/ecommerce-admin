@@ -311,7 +311,7 @@ function VariantsTable({
   storeId: number;
   variants: Variant[];
   options: ProductOption[];
-  onVariantsGenerated: () => void;
+  onVariantsGenerated: () => Promise<void> | void;
 }) {
   const [generateVariants, { loading }] = useMutation(GENERATE_VARIANTS, {
     onCompleted: () => {
@@ -410,6 +410,8 @@ function VariantsTable({
     const parsedPrice = draft.price.trim().length > 0 ? Number(draft.price) : undefined;
     const parsedCompareAt = draft.compareAtPrice.trim().length > 0 ? Number(draft.compareAtPrice) : undefined;
     const parsedInventory = Number(draft.inventory);
+    const currentInventory = Number(variant.inventory_item?.total_available ?? 0);
+    const inventoryChanged = parsedInventory !== currentInventory;
 
     if (parsedPrice !== undefined && (!Number.isFinite(parsedPrice) || parsedPrice < 0)) {
       updateEditableVariant(variant.id, (current) => ({ ...current, error: 'Price must be a valid non-negative number.' }));
@@ -423,6 +425,14 @@ function VariantsTable({
 
     if (!Number.isFinite(parsedInventory) || parsedInventory < 0) {
       updateEditableVariant(variant.id, (current) => ({ ...current, error: 'Inventory must be a valid non-negative number.' }));
+      return;
+    }
+
+    if (inventoryChanged && !activeLocationId) {
+      updateEditableVariant(variant.id, (current) => ({
+        ...current,
+        error: 'No active inventory location found for this store.',
+      }));
       return;
     }
 
@@ -441,7 +451,7 @@ function VariantsTable({
         },
       });
 
-      if (variant.inventoryItemId && activeLocationId) {
+      if (inventoryChanged && variant.inventoryItemId && activeLocationId) {
         await setInventoryLevel({
           variables: {
             input: {
@@ -454,7 +464,7 @@ function VariantsTable({
       }
 
       updateEditableVariant(variant.id, (current) => ({ ...current, saving: false, error: undefined }));
-      onVariantsGenerated();
+      await onVariantsGenerated();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to save variant changes.';
       updateEditableVariant(variant.id, (current) => ({ ...current, saving: false, error: message }));
@@ -672,7 +682,9 @@ export default function ProductDetailPage({
   const [mediaItems, setMediaItems] = useState<ProductMediaItem[]>([]);
   const [mediaUrlInput, setMediaUrlInput] = useState('');
   const [mediaUploadError, setMediaUploadError] = useState<string | null>(null);
+  const [mediaSuccessMessage, setMediaSuccessMessage] = useState<string | null>(null);
   const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [hasUnsavedMediaChanges, setHasUnsavedMediaChanges] = useState(false);
 
   useEffect(() => {
     const mapped: ProductMediaItem[] = (mediaData?.productMedia || []).map((item, index) => {
@@ -697,17 +709,30 @@ export default function ProductDetailPage({
     formState: { errors, isDirty },
   } = useForm<ProductFormData>({
     resolver: zodResolver(productSchema),
-    values: product
-      ? {
-          title: product.title,
-          description: product.description || '',
-          brand: product.brand || '',
-          seoTitle: product.seo?.meta_title || '',
-          seoDescription: product.seo?.meta_description || '',
-          seoHandle: product.seo?.handle || '',
-        }
-      : undefined,
+    defaultValues: {
+      title: '',
+      description: '',
+      brand: '',
+      seoTitle: '',
+      seoDescription: '',
+      seoHandle: '',
+    },
   });
+
+  useEffect(() => {
+    if (!product) {
+      return;
+    }
+
+    reset({
+      title: product.title,
+      description: product.description || '',
+      brand: product.brand || '',
+      seoTitle: product.seo?.meta_title || '',
+      seoDescription: product.seo?.meta_description || '',
+      seoHandle: product.seo?.handle || '',
+    });
+  }, [product, reset]);
 
   const [updateProduct, { loading: updating }] = useMutation(UPDATE_PRODUCT);
   const [deleteProduct, { loading: deleting }] = useMutation(DELETE_PRODUCT, {
@@ -719,39 +744,73 @@ export default function ProductDetailPage({
   const [publishProduct, { loading: publishing }] = useMutation(PUBLISH_PRODUCT);
   const [archiveProduct, { loading: archiving }] = useMutation(ARCHIVE_PRODUCT);
   const [attachProductMedia, { loading: attachingMedia }] = useMutation(ATTACH_PRODUCT_MEDIA);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const onSubmit = async (formData: ProductFormData) => {
-    await updateProduct({
-      variables: {
-        input: {
-          product_id: Number(id),
-          title: formData.title,
-          description: formData.description || undefined,
-          brand: formData.brand || undefined,
-          seo: {
-            handle: formData.seoHandle || undefined,
-            meta_title: formData.seoTitle || undefined,
-            meta_description: formData.seoDescription || undefined,
+    setSaveError(null);
+
+    const seoHandle = formData.seoHandle?.trim() || product?.seo?.handle || undefined;
+    const seoTitle = formData.seoTitle?.trim() || undefined;
+    const seoDescription = formData.seoDescription?.trim() || undefined;
+
+    try {
+      await updateProduct({
+        variables: {
+          input: {
+            product_id: Number(id),
+            title: formData.title,
+            description: formData.description || undefined,
+            brand: formData.brand || undefined,
+            ...(seoHandle
+              ? {
+                  seo: {
+                    handle: seoHandle,
+                    meta_title: seoTitle,
+                    meta_description: seoDescription,
+                  },
+                }
+              : {}),
           },
         },
-      },
-    });
-    await Promise.all([refetch(), refetchVariants()]);
+      });
+
+      await Promise.allSettled([refetch(), refetchVariants()]);
+      setHasUnsavedMediaChanges(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save product.';
+      setSaveError(message);
+    }
   };
 
   const handlePublish = async () => {
-    await publishProduct({ variables: { id: Number(id) } });
-    await Promise.all([refetch(), refetchVariants()]);
+    try {
+      await publishProduct({ variables: { id: Number(id) } });
+      await Promise.allSettled([refetch(), refetchVariants()]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to publish product.';
+      setSaveError(message);
+    }
   };
 
   const handleArchive = async () => {
-    await archiveProduct({ variables: { id: Number(id) } });
-    await Promise.all([refetch(), refetchVariants()]);
+    try {
+      await archiveProduct({ variables: { id: Number(id) } });
+      await Promise.allSettled([refetch(), refetchVariants()]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to archive product.';
+      setSaveError(message);
+    }
   };
 
   const handleDelete = async () => {
     if (confirm('Are you sure you want to delete this product?')) {
-      await deleteProduct({ variables: { id: Number(id) } });
+      try {
+        await deleteProduct({ variables: { id: Number(id) } });
+        router.push('/admin/products');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to delete product.';
+        setSaveError(message);
+      }
     }
   };
 
@@ -761,20 +820,30 @@ export default function ProductDetailPage({
       return;
     }
 
-    await attachProductMedia({
-      variables: {
-        input: {
-          product_id: Number(id),
-          url: toAbsoluteMediaUrl(url),
-          type: 'IMAGE',
-          position: (mediaData?.productMedia?.length || 0) + 1,
-          is_cover: (mediaData?.productMedia?.length || 0) === 0,
-        },
-      },
-    });
+    setMediaUploadError(null);
+    setMediaSuccessMessage(null);
 
-    setMediaUrlInput('');
-    await refetchMedia();
+    try {
+      await attachProductMedia({
+        variables: {
+          input: {
+            product_id: Number(id),
+            url: toAbsoluteMediaUrl(url),
+            type: 'IMAGE',
+            position: (mediaData?.productMedia?.length || 0) + 1,
+            is_cover: (mediaData?.productMedia?.length || 0) === 0,
+          },
+        },
+      });
+
+      setMediaUrlInput('');
+      await refetchMedia();
+      setMediaSuccessMessage('Media attached successfully.');
+      setHasUnsavedMediaChanges(true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to attach media.';
+      setMediaUploadError(message);
+    }
   };
 
   const handleUploadFiles = async (files: File[]) => {
@@ -783,6 +852,7 @@ export default function ProductDetailPage({
     }
 
     setMediaUploadError(null);
+    setMediaSuccessMessage(null);
     setUploadingFiles(true);
 
     try {
@@ -828,6 +898,8 @@ export default function ProductDetailPage({
       }
 
       await refetchMedia();
+      setMediaSuccessMessage(`Uploaded ${files.length} file${files.length === 1 ? '' : 's'} successfully.`);
+      setHasUnsavedMediaChanges(true);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'File upload failed.';
       setMediaUploadError(message);
@@ -916,13 +988,14 @@ export default function ProductDetailPage({
               Archive
             </Button>
           )}
-          <Button onClick={handleSubmit(onSubmit)} disabled={updating || !isDirty}>
+          <Button onClick={handleSubmit(onSubmit)} disabled={updating || (!isDirty && !hasUnsavedMediaChanges)}>
             {updating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             <Save className="mr-2 h-4 w-4" />
             Save
           </Button>
         </div>
       </div>
+      {saveError && <p className="text-sm text-destructive">{saveError}</p>}
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
@@ -1004,9 +1077,8 @@ export default function ProductDetailPage({
             storeId={product.storeId}
             variants={productVariants}
             options={product.options}
-            onVariantsGenerated={() => {
-              refetch();
-              refetchVariants();
+            onVariantsGenerated={async () => {
+              await Promise.all([refetch(), refetchVariants()]);
             }}
           />
         </TabsContent>
@@ -1016,7 +1088,7 @@ export default function ProductDetailPage({
             <CardHeader>
               <CardTitle>Product Media</CardTitle>
               <CardDescription>
-                Drag and drop images for preview, or attach image URLs to persist media
+                Drag/drop or attach URLs to save media immediately (no main Save click needed)
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -1042,6 +1114,7 @@ export default function ProductDetailPage({
               </div>
               {uploadingFiles && <p className="text-sm text-muted-foreground">Uploading files...</p>}
               {mediaLoading && <p className="text-sm text-muted-foreground">Loading media...</p>}
+              {mediaSuccessMessage && <p className="text-sm text-green-600">{mediaSuccessMessage}</p>}
               {mediaUploadError && <p className="text-sm text-destructive">{mediaUploadError}</p>}
             </CardContent>
           </Card>

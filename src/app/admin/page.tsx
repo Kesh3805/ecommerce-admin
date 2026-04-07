@@ -3,7 +3,7 @@
 import { useQuery } from '@apollo/client/react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Package, ShoppingCart, Users, TrendingUp } from 'lucide-react';
-import { GET_PRODUCTS } from '@/graphql/operations';
+import { GET_MY_STORES, GET_PRODUCTS, GET_USERS_SUMMARY } from '@/graphql/operations';
 
 interface GetProductsResponse {
   products: {
@@ -11,13 +11,33 @@ interface GetProductsResponse {
   };
 }
 
+interface GetMyStoresResponse {
+  myStores: Array<{
+    store_id: number;
+    name: string;
+  }>;
+}
+
+interface GetUsersSummaryResponse {
+  users: {
+    pagination: {
+      total: number;
+    };
+  };
+}
+
 export default function AdminDashboard() {
-  const storeId = Number(process.env.NEXT_PUBLIC_STORE_ID || 1);
-  const { data } = useQuery<GetProductsResponse>(GET_PRODUCTS, {
-    variables: { filter: { store_id: storeId }, pagination: { page: 1, limit: 1 } },
+  const { data: storesData } = useQuery<GetMyStoresResponse>(GET_MY_STORES);
+  const { data: productsData } = useQuery<GetProductsResponse>(GET_PRODUCTS, {
+    variables: { pagination: { page: 1, limit: 1 } },
+  });
+  const { data: usersData } = useQuery<GetUsersSummaryResponse>(GET_USERS_SUMMARY, {
+    variables: { input: { page: 1, limit: 1 } },
   });
 
-  const totalProducts = data?.products?.total ?? 0;
+  const totalProducts = productsData?.products?.total ?? 0;
+  const totalUsers = usersData?.users?.pagination?.total ?? 0;
+  const currentStoreName = storesData?.myStores?.[0]?.name;
 
   return (
     <div className="space-y-6">
@@ -25,7 +45,7 @@ export default function AdminDashboard() {
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Overview</p>
         <h1 className="mt-1 text-3xl font-bold tracking-tight">Dashboard</h1>
         <p className="mt-1 text-muted-foreground">
-          Welcome to your ecommerce admin dashboard
+          Welcome to your ecommerce admin dashboard{currentStoreName ? ` · ${currentStoreName}` : ''}
         </p>
       </div>
 
@@ -68,7 +88,7 @@ export default function AdminDashboard() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">0</div>
+            <div className="text-2xl font-bold">{totalUsers}</div>
             <p className="text-xs text-muted-foreground">
               Registered customers
             </p>
