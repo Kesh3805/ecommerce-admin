@@ -6,18 +6,20 @@ import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { ArrowLeft, Save, Trash2, Plus, X, Loader2 } from 'lucide-react';
+import { ArrowLeft, Save, Trash2, Plus, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 
 import {
   GET_PRODUCT,
   GET_VARIANTS,
   GET_PRODUCT_MEDIA,
+  GET_AVAILABLE_COUNTRIES,
   UPDATE_PRODUCT,
   DELETE_PRODUCT,
   ADD_PRODUCT_OPTION,
   GENERATE_VARIANTS,
   UPDATE_VARIANT,
+  DELETE_VARIANT,
   ATTACH_PRODUCT_MEDIA,
   DELETE_PRODUCT_MEDIA,
   SET_INVENTORY_LEVEL,
@@ -60,7 +62,6 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Separator } from '@/components/ui/separator';
 
 const productSchema = z.object({
   title: z.string().min(1, 'Title is required'),
@@ -70,6 +71,12 @@ const productSchema = z.object({
   seoDescription: z.string().optional(),
   seoHandle: z.string().optional(),
 });
+
+const COUNTRY_NAME_BY_CODE = new Map(COUNTRY_OPTIONS.map((country) => [country.code, country.name]));
+
+function normalizeCountryCodes(codes: string[]): string[] {
+  return [...new Set(codes.map((code) => code.toUpperCase()).filter((code) => /^[A-Z]{2}$/.test(code)))].sort();
+}
 
 type ProductFormData = z.infer<typeof productSchema>;
 
@@ -112,6 +119,16 @@ interface Location {
   is_active: boolean;
 }
 
+interface EditableVariantState {
+  sku: string;
+  price: string;
+  compareAtPrice: string;
+  inventoryPolicy: 'DENY' | 'CONTINUE';
+  inventory: string;
+  saving: boolean;
+  error?: string;
+}
+
 interface Product {
   id: number;
   storeId: number;
@@ -131,6 +148,10 @@ interface Product {
   categories?: { id: string; name: string }[];
   createdAt: string;
   updatedAt: string;
+}
+
+interface GetAvailableCountriesResponse {
+  availableCountries: string[];
 }
 
 interface ProductMediaRecord {
@@ -323,6 +344,7 @@ function VariantsTable({
   });
 
   const [updateVariant] = useMutation(UPDATE_VARIANT);
+  const [deleteVariantMutation] = useMutation(DELETE_VARIANT);
   const [setInventoryLevel] = useMutation(SET_INVENTORY_LEVEL);
 
   const { data: locationsData } = useQuery<{ locations: Location[] }>(GET_LOCATIONS, {
@@ -336,66 +358,44 @@ function VariantsTable({
     return active?.location_id ?? locations[0]?.location_id;
   }, [locationsData]);
 
-  const [editableVariants, setEditableVariants] = useState<Record<number, {
-    sku: string;
-    price: string;
-    compareAtPrice: string;
-    inventoryPolicy: 'DENY' | 'CONTINUE';
-    inventory: string;
-    saving: boolean;
-    error?: string;
-  }>>({});
+  const toEditableVariantState = (variant: Variant): EditableVariantState => ({
+    sku: variant.sku || '',
+    price: Number.isFinite(variant.price) ? String(variant.price) : '',
+    compareAtPrice: Number.isFinite(variant.compareAtPrice) ? String(variant.compareAtPrice) : '',
+    inventoryPolicy: variant.inventoryPolicy === 'CONTINUE' ? 'CONTINUE' : 'DENY',
+    inventory: Number.isFinite(variant.inventory_item?.total_available)
+      ? String(variant.inventory_item?.total_available)
+      : '0',
+    saving: false,
+  });
 
-  useEffect(() => {
-    const nextState: Record<number, {
-      sku: string;
-      price: string;
-      compareAtPrice: string;
-      inventoryPolicy: 'DENY' | 'CONTINUE';
-      inventory: string;
-      saving: boolean;
-      error?: string;
-    }> = {};
+  const variantById = useMemo(() => {
+    return new Map(variants.map((variant) => [variant.id, variant] as const));
+  }, [variants]);
+
+  const [editableVariantDrafts, setEditableVariantDrafts] = useState<Record<number, EditableVariantState>>({});
+
+  const editableVariants = useMemo(() => {
+    const nextState: Record<number, EditableVariantState> = {};
 
     for (const variant of variants) {
-      nextState[variant.id] = {
-        sku: variant.sku || '',
-        price: Number.isFinite(variant.price) ? String(variant.price) : '',
-        compareAtPrice: Number.isFinite(variant.compareAtPrice) ? String(variant.compareAtPrice) : '',
-        inventoryPolicy: variant.inventoryPolicy === 'CONTINUE' ? 'CONTINUE' : 'DENY',
-        inventory: Number.isFinite(variant.inventory_item?.total_available)
-          ? String(variant.inventory_item?.total_available)
-          : '0',
-        saving: false,
-      };
+      nextState[variant.id] = editableVariantDrafts[variant.id] ?? toEditableVariantState(variant);
     }
 
-    setEditableVariants(nextState);
-  }, [variants]);
+    return nextState;
+  }, [editableVariantDrafts, variants]);
 
   const updateEditableVariant = (
     variantId: number,
-    updater: (current: {
-      sku: string;
-      price: string;
-      compareAtPrice: string;
-      inventoryPolicy: 'DENY' | 'CONTINUE';
-      inventory: string;
-      saving: boolean;
-      error?: string;
-    }) => {
-      sku: string;
-      price: string;
-      compareAtPrice: string;
-      inventoryPolicy: 'DENY' | 'CONTINUE';
-      inventory: string;
-      saving: boolean;
-      error?: string;
-    },
+    updater: (current: EditableVariantState) => EditableVariantState,
   ) => {
-    setEditableVariants((current) => {
-      const existing = current[variantId];
-      if (!existing) return current;
+    setEditableVariantDrafts((current) => {
+      const variant = variantById.get(variantId);
+      if (!variant) {
+        return current;
+      }
+
+      const existing = current[variantId] ?? toEditableVariantState(variant);
 
       return {
         ...current,
@@ -485,6 +485,33 @@ function VariantsTable({
         },
       },
     });
+  };
+
+  const handleDeleteVariant = async (variant: Variant) => {
+    if (!confirm(`Delete variant '${variant.title}'?`)) {
+      return;
+    }
+
+    updateEditableVariant(variant.id, (current) => ({ ...current, saving: true, error: undefined }));
+
+    try {
+      await deleteVariantMutation({
+        variables: {
+          id: variant.id,
+        },
+      });
+
+      setEditableVariantDrafts((current) => {
+        const next = { ...current };
+        delete next[variant.id];
+        return next;
+      });
+
+      await onVariantsGenerated();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to delete variant.';
+      updateEditableVariant(variant.id, (current) => ({ ...current, saving: false, error: message }));
+    }
   };
 
   const canGenerate = options.length > 0 && variants.length === 0;
@@ -614,17 +641,29 @@ function VariantsTable({
                     />
                   </TableCell>
                   <TableCell>
-                    <Button
-                      size="sm"
-                      onClick={() => handleSaveVariant(variant)}
-                      disabled={editableVariants[variant.id]?.saving}
-                    >
-                      {editableVariants[variant.id]?.saving ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        'Save'
-                      )}
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => handleSaveVariant(variant)}
+                        disabled={editableVariants[variant.id]?.saving}
+                      >
+                        {editableVariants[variant.id]?.saving ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          'Save'
+                        )}
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => handleDeleteVariant(variant)}
+                        disabled={editableVariants[variant.id]?.saving}
+                        aria-label={`Delete variant ${variant.title}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </TableCell>
                   </TableRow>
                 ))}
@@ -691,8 +730,31 @@ export default function ProductDetailPage({
   const [hasUnsavedCountryChanges, setHasUnsavedCountryChanges] = useState(false);
   const [selectedCountryCodes, setSelectedCountryCodes] = useState<string[]>([]);
 
+  const { data: availableCountriesData } = useQuery<GetAvailableCountriesResponse>(GET_AVAILABLE_COUNTRIES, {
+    variables: { storeId: product?.storeId },
+    skip: !product?.storeId,
+  });
+
+  const configuredCountryCodes = useMemo(() => {
+    const normalized = normalizeCountryCodes(availableCountriesData?.availableCountries ?? []);
+    if (normalized.length > 0) {
+      return normalized;
+    }
+
+    return COUNTRY_OPTIONS.map((country) => country.code);
+  }, [availableCountriesData]);
+
+  const countryOptions = useMemo(() => {
+    const optionCodes = [...new Set([...configuredCountryCodes, ...selectedCountryCodes])].sort();
+
+    return optionCodes.map((code) => ({
+      code,
+      name: COUNTRY_NAME_BY_CODE.get(code) || code,
+    }));
+  }, [configuredCountryCodes, selectedCountryCodes]);
+
   useEffect(() => {
-    const mapped: ProductMediaItem[] = (mediaData?.productMedia || []).map((item, index) => {
+    const mapped: ProductMediaItem[] = (mediaData?.productMedia || []).map((item) => {
       const absoluteUrl = toAbsoluteMediaUrl(item.url);
       const fileName = absoluteUrl.split('/').pop() || `media-${item.id}`;
 
@@ -744,12 +806,14 @@ export default function ProductDetailPage({
       return;
     }
 
-    const fromProduct = product.country_codes?.map((code) => code.toUpperCase()) ?? [];
-    const fallback = COUNTRY_OPTIONS.map((country) => country.code);
+    const fromProduct = normalizeCountryCodes(product.country_codes ?? []);
+    const fallback = configuredCountryCodes.length > 0
+      ? configuredCountryCodes
+      : COUNTRY_OPTIONS.map((country) => country.code);
     const next = fromProduct.length > 0 ? fromProduct : fallback;
     setSelectedCountryCodes([...new Set(next)].sort());
     setHasUnsavedCountryChanges(false);
-  }, [product]);
+  }, [configuredCountryCodes, product]);
 
   const [updateProduct, { loading: updating }] = useMutation(UPDATE_PRODUCT);
   const [deleteProduct, { loading: deleting }] = useMutation(DELETE_PRODUCT, {
@@ -798,7 +862,7 @@ export default function ProductDetailPage({
         },
       });
 
-      await Promise.allSettled([refetch(), refetchVariants()]);
+      await refetch();
       setHasUnsavedMediaChanges(false);
       setHasUnsavedCountryChanges(false);
     } catch (error) {
@@ -810,7 +874,7 @@ export default function ProductDetailPage({
   const handlePublish = async () => {
     try {
       await publishProduct({ variables: { id: Number(id) } });
-      await Promise.allSettled([refetch(), refetchVariants()]);
+      await refetch();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to publish product.';
       setSaveError(message);
@@ -820,7 +884,7 @@ export default function ProductDetailPage({
   const handleArchive = async () => {
     try {
       await archiveProduct({ variables: { id: Number(id) } });
-      await Promise.allSettled([refetch(), refetchVariants()]);
+      await refetch();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to archive product.';
       setSaveError(message);
@@ -989,7 +1053,7 @@ export default function ProductDetailPage({
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Product Not Found</h1>
             <p className="text-muted-foreground">
-              The product you're looking for doesn't exist or was deleted.
+              The product you&apos;re looking for doesn&apos;t exist or was deleted.
             </p>
           </div>
         </div>
@@ -1094,9 +1158,14 @@ export default function ProductDetailPage({
                     <p className="text-sm">{product.categories?.[0]?.name || 'No category'}</p>
                   </div>
                   <div className="space-y-2">
-                    <Label>Country Availability</Label>
+                    <div className="flex items-center justify-between gap-2">
+                      <Label>Country Availability</Label>
+                      <Link href="/admin/locations/countries" className="text-xs font-medium text-primary hover:underline">
+                        Manage countries
+                      </Link>
+                    </div>
                     <div className="grid max-h-52 grid-cols-1 gap-2 overflow-auto rounded-md border p-2">
-                      {COUNTRY_OPTIONS.map((country) => {
+                      {countryOptions.map((country) => {
                         const checked = selectedCountryCodes.includes(country.code);
 
                         return (
@@ -1159,7 +1228,7 @@ export default function ProductDetailPage({
             variants={productVariants}
             options={product.options}
             onVariantsGenerated={async () => {
-              await Promise.all([refetch(), refetchVariants()]);
+              await refetchVariants();
             }}
           />
         </TabsContent>

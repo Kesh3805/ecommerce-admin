@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
@@ -11,10 +11,12 @@ import {
   Settings,
   Boxes,
   Tags,
+  Tag,
   MapPin,
   LogOut,
   Sparkles,
   Library,
+  FileUp,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -47,9 +49,19 @@ const navItems = [
     icon: Package,
   },
   {
+    title: 'Product Import',
+    href: '/admin/products/import',
+    icon: FileUp,
+  },
+  {
     title: 'Categories',
     href: '/admin/categories',
     icon: Tags,
+  },
+  {
+    title: 'Brands',
+    href: '/admin/brands',
+    icon: Tag,
   },
   {
     title: 'Collections',
@@ -146,18 +158,15 @@ interface AdminLayoutProps {
 
 export function AdminLayout({ children }: AdminLayoutProps) {
   const router = useRouter();
-  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const authenticated = isAuthenticated();
 
   useEffect(() => {
-    if (!isAuthenticated()) {
+    if (!authenticated) {
       router.replace('/login');
-      return;
     }
+  }, [authenticated, router]);
 
-    setIsCheckingAuth(false);
-  }, [router]);
-
-  if (isCheckingAuth) {
+  if (!authenticated) {
     return <div className="p-6 text-sm text-muted-foreground">Checking session...</div>;
   }
 

@@ -55,6 +55,8 @@ export const PRODUCT_LIST_FRAGMENT = gql`
     title
     status
     brand
+    primaryImageUrl: primary_image_url
+    mediaUrls: media_urls
     createdAt: created_at
     updatedAt: updated_at
     publishedAt: published_at
@@ -125,6 +127,23 @@ export const UPDATE_PRODUCT = gql`
   ${PRODUCT_FRAGMENT}
 `;
 
+export const BULK_IMPORT_PRODUCTS = gql`
+  mutation BulkImportProducts($input: BulkImportProductsInput!) {
+    bulkImportProducts(input: $input) {
+      total_rows
+      success_count
+      failure_count
+      results {
+        row_number
+        success
+        message
+        product_id
+        handle
+      }
+    }
+  }
+`;
+
 export const DELETE_PRODUCT = gql`
   mutation DeleteProduct($id: Int!) {
     deleteProduct(id: $id)
@@ -176,6 +195,7 @@ export const GET_VARIANTS = gql`
       sku
       price
       compareAtPrice: compare_at_price
+      media_urls
       inventoryPolicy: inventory_policy
       inventoryItemId: inventory_item_id
       inventory_item {
@@ -200,6 +220,7 @@ export const GENERATE_VARIANTS = gql`
         title
         sku
         price
+        media_urls
         inventoryPolicy: inventory_policy
         inventoryItemId: inventory_item_id
       }
@@ -215,6 +236,7 @@ export const UPDATE_VARIANT = gql`
       sku
       price
       compareAtPrice: compare_at_price
+      media_urls
       inventoryPolicy: inventory_policy
       inventoryItemId: inventory_item_id
       inventory_item {
@@ -222,6 +244,12 @@ export const UPDATE_VARIANT = gql`
         total_available
       }
     }
+  }
+`;
+
+export const DELETE_VARIANT = gql`
+  mutation DeleteVariant($id: Int!) {
+    deleteVariant(id: $id)
   }
 `;
 
@@ -233,6 +261,7 @@ export const CREATE_VARIANT = gql`
       sku
       price
       compareAtPrice: compare_at_price
+      media_urls
       inventoryPolicy: inventory_policy
       inventoryItemId: inventory_item_id
       inventory_item {
@@ -317,7 +346,7 @@ export const SET_INVENTORY_LEVEL = gql`
 `;
 
 export const GET_CATEGORIES = gql`
-  query GetCategories($storeId: Int!) {
+  query GetCategories($storeId: Int) {
     categories(storeId: $storeId) {
       id: category_id
       name
@@ -335,6 +364,7 @@ export const CREATE_CATEGORY = gql`
       name
       slug
       parent_id
+      metadata
     }
   }
 `;
@@ -346,6 +376,7 @@ export const UPDATE_CATEGORY = gql`
       name
       slug
       parent_id
+      metadata
     }
   }
 `;
@@ -353,6 +384,54 @@ export const UPDATE_CATEGORY = gql`
 export const DELETE_CATEGORY = gql`
   mutation DeleteCategory($id: Int!) {
     deleteCategory(id: $id)
+  }
+`;
+
+export const GET_BRANDS = gql`
+  query GetBrands($storeId: Int) {
+    brands(storeId: $storeId) {
+      brand_id
+      store_id
+      store_name
+      name
+      slug
+      created_at
+      updated_at
+    }
+  }
+`;
+
+export const CREATE_BRAND = gql`
+  mutation CreateBrand($input: CreateBrandInput!) {
+    createBrand(input: $input) {
+      brand_id
+      store_id
+      store_name
+      name
+      slug
+      created_at
+      updated_at
+    }
+  }
+`;
+
+export const UPDATE_BRAND = gql`
+  mutation UpdateBrand($input: UpdateBrandInput!) {
+    updateBrand(input: $input) {
+      brand_id
+      store_id
+      store_name
+      name
+      slug
+      created_at
+      updated_at
+    }
+  }
+`;
+
+export const DELETE_BRAND = gql`
+  mutation DeleteBrand($brandId: Int!) {
+    deleteBrand(brandId: $brandId)
   }
 `;
 
@@ -390,6 +469,7 @@ export const DELETE_PRODUCT_MEDIA = gql`
 `;
 
 // Collection queries for merchandising
+// NOTE: Collection mutations (CREATE, UPDATE, DELETE, etc.) are in merchandising.ts
 export const GET_COLLECTIONS = gql`
   query GetCollections($filter: CollectionFilterInput) {
     collections(filter: $filter) {
@@ -401,8 +481,6 @@ export const GET_COLLECTIONS = gql`
       isVisible: is_visible
       productCount: product_count
       imageUrl: image_url
-      createdAt: created_at
-      updatedAt: updated_at
     }
   }
 `;
@@ -425,60 +503,6 @@ export const GET_COLLECTION = gql`
         title
         status
       }
-      rules {
-        ruleId: rule_id
-        field
-        operator
-        value
-        valueType: value_type
-        ruleGroup: rule_group
-      }
-    }
-  }
-`;
-
-export const CREATE_COLLECTION = gql`
-  mutation CreateCollection($input: CreateCollectionInput!) {
-    createCollection(input: $input) {
-      id: collection_id
-      name
-      slug
-    }
-  }
-`;
-
-export const UPDATE_COLLECTION = gql`
-  mutation UpdateCollection($input: UpdateCollectionInput!) {
-    updateCollection(input: $input) {
-      id: collection_id
-      name
-      slug
-    }
-  }
-`;
-
-export const DELETE_COLLECTION = gql`
-  mutation DeleteCollection($collectionId: Int!) {
-    deleteCollection(collectionId: $collectionId)
-  }
-`;
-
-export const ADD_PRODUCTS_TO_COLLECTION = gql`
-  mutation AddProductsToCollection($input: AddProductsToCollectionInput!) {
-    addProductsToCollection(input: $input)
-  }
-`;
-
-export const REMOVE_PRODUCTS_FROM_COLLECTION = gql`
-  mutation RemoveProductsFromCollection($collectionId: Int!, $productIds: [Int!]!) {
-    removeProductsFromCollection(collectionId: $collectionId, productIds: $productIds)
-  }
-`;
-
-export const SET_COLLECTION_RULES = gql`
-  mutation SetCollectionRules($collectionId: Int!, $rules: [CollectionRuleInput!]!) {
-    setCollectionRules(collectionId: $collectionId, rules: $rules) {
-      id: collection_id
       rules {
         ruleId: rule_id
         field

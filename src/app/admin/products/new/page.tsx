@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@apollo/client/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -13,6 +13,8 @@ import {
   ADD_PRODUCT_OPTION,
   CREATE_PRODUCT,
   CREATE_VARIANT,
+  GET_AVAILABLE_COUNTRIES,
+  GET_BRANDS,
   GET_CATEGORIES,
   GET_LOCATIONS,
   GET_MY_STORES,
@@ -68,6 +70,14 @@ interface GetMyStoresResponse {
   myStores: Array<{ store_id: number; name: string }>;
 }
 
+interface GetAvailableCountriesResponse {
+  availableCountries: string[];
+}
+
+interface GetBrandsResponse {
+  brands: Array<{ name: string }>;
+}
+
 interface CreateVariantResponse {
   createVariant: {
     inventoryItemId?: number;
@@ -82,6 +92,12 @@ function slugify(input: string) {
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
+}
+
+const COUNTRY_NAME_BY_CODE = new Map(COUNTRY_OPTIONS.map((country) => [country.code, country.name]));
+
+function normalizeCountryCodes(codes: string[]): string[] {
+  return [...new Set(codes.map((code) => code.toUpperCase()).filter((code) => /^[A-Z]{2}$/.test(code)))].sort();
 }
 
 function parseCategoryMetafields(metadata: unknown): Array<{ key: string; label: string; type: 'text' | 'textarea' }> {
@@ -153,14 +169,67 @@ export default function NewProductPage() {
   const [optionGroups, setOptionGroups] = useState<OptionGroup[]>([]);
   const [variantRows, setVariantRows] = useState<VariantRow[]>([]);
   const [metafieldValues, setMetafieldValues] = useState<Record<string, string>>({});
-  const [selectedCountryCodes, setSelectedCountryCodes] = useState<string[]>(
-    COUNTRY_OPTIONS.map((country) => country.code),
+  const [selectedCountryCodes, setSelectedCountryCodes] = useState<string[]>([]);
+
+  const { data: availableCountriesData } = useQuery<GetAvailableCountriesResponse>(GET_AVAILABLE_COUNTRIES, {
+    variables: { storeId },
+    skip: !storeId,
+  });
+
+  const availableCountryCodes = useMemo(() => {
+    const fromStore = normalizeCountryCodes(availableCountriesData?.availableCountries ?? []);
+    if (fromStore.length > 0) {
+      return fromStore;
+    }
+
+    return COUNTRY_OPTIONS.map((country) => country.code);
+  }, [availableCountriesData]);
+
+  const countryOptions = useMemo(
+    () =>
+      availableCountryCodes.map((code) => ({
+        code,
+        name: COUNTRY_NAME_BY_CODE.get(code) || code,
+      })),
+    [availableCountryCodes],
   );
+
+  useEffect(() => {
+    if (availableCountryCodes.length === 0) {
+      return;
+    }
+
+    setSelectedCountryCodes((current) => {
+      if (current.length === 0) {
+        return [...availableCountryCodes];
+      }
+
+      const filtered = current.filter((code) => availableCountryCodes.includes(code));
+      return filtered.length > 0 ? filtered : [...availableCountryCodes];
+    });
+  }, [availableCountryCodes]);
 
   const { data: categoriesData, error: categoriesError } = useQuery<GetCategoriesResponse>(GET_CATEGORIES, {
     variables: { storeId },
     skip: !storeId,
   });
+
+  const { data: brandsData } = useQuery<GetBrandsResponse>(GET_BRANDS, {
+    variables: {
+      storeId,
+    },
+    skip: !storeId,
+    fetchPolicy: 'no-cache',
+  });
+
+  const brandSuggestions = useMemo(
+    () =>
+      [...new Set((brandsData?.brands ?? [])
+        .map((item) => String(item.name ?? '').trim())
+        .filter((brand) => brand.length > 0))]
+        .sort((a, b) => a.localeCompare(b)),
+    [brandsData],
+  );
 
   const categoryOptions: CategoryOption[] = [
     {
@@ -392,15 +461,22 @@ export default function NewProductPage() {
               categories={categoryOptions}
               categoryId={selectedCategoryId || ''}
               onCategoryChange={(categoryId) => setValue('categoryId', categoryId, { shouldDirty: true })}
+              brandSuggestions={brandSuggestions}
+              onBrandSelect={(brand) => setValue('brand', brand, { shouldDirty: true })}
             />
             <ProductSEOCard register={register} />
             <div className="rounded-xl border bg-card p-4">
               <h3 className="text-sm font-semibold">Country Availability</h3>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Product will be visible only in selected storefront countries.
-              </p>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">
+                  Product will be visible only in selected storefront countries.
+                </p>
+                <Link href="/admin/locations/countries" className="text-xs font-medium text-primary hover:underline">
+                  Manage countries
+                </Link>
+              </div>
               <div className="mt-3 grid max-h-56 grid-cols-1 gap-2 overflow-auto text-sm">
-                {COUNTRY_OPTIONS.map((country) => {
+                {countryOptions.map((country) => {
                   const checked = selectedCountryCodes.includes(country.code);
 
                   return (

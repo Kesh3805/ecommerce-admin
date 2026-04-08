@@ -10,12 +10,14 @@ import { useQuery, useMutation, useLazyQuery } from '@apollo/client/react';
 import {
   GET_COLLECTIONS,
   GET_COLLECTION,
+  GET_MY_STORES,
+} from '@/graphql/operations';
+import {
   CREATE_COLLECTION,
   UPDATE_COLLECTION,
   DELETE_COLLECTION,
   SET_COLLECTION_RULES,
-  GET_MY_STORES,
-} from '@/graphql/operations';
+} from '@/graphql/merchandising';
 import { Button } from '@/components/ui/button';
 import { Library, Plus, Trash2, Edit, Loader2 } from 'lucide-react';
 
@@ -73,6 +75,35 @@ interface CollectionsData {
 interface StoresData {
   myStores: Array<{ store_id: number; name: string }>;
 }
+
+const RULE_FIELD_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'brand', label: 'Brand' },
+  { value: 'title', label: 'Product Title' },
+  { value: 'description', label: 'Description' },
+  { value: 'status', label: 'Status' },
+  { value: 'handle', label: 'Handle' },
+  { value: 'product_id', label: 'Product ID' },
+  { value: 'category', label: 'Category ID' },
+  { value: 'price', label: 'Price' },
+  { value: 'created_at', label: 'Created At' },
+  { value: 'updated_at', label: 'Updated At' },
+];
+
+const RULE_OPERATOR_OPTIONS: CollectionRule['operator'][] = [
+  'EQUALS',
+  'NOT_EQUALS',
+  'GREATER_THAN',
+  'LESS_THAN',
+  'GREATER_THAN_OR_EQUAL',
+  'LESS_THAN_OR_EQUAL',
+  'CONTAINS',
+  'NOT_CONTAINS',
+  'STARTS_WITH',
+  'IS_SET',
+  'IS_NOT_SET',
+];
+
+const RULE_VALUE_TYPE_OPTIONS: CollectionRule['valueType'][] = ['STRING', 'NUMBER', 'BOOLEAN', 'ARRAY'];
 
 export default function CollectionsPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -173,7 +204,13 @@ export default function CollectionsPage() {
       isVisible: detail.isVisible,
       type: detail.type,
     });
-    setRules(detail.rules || []);
+    setRules(
+      (detail.rules || []).map((rule) => ({
+        ...rule,
+        valueType: rule.valueType || 'STRING',
+        ruleGroup: Number.isInteger(rule.ruleGroup) ? rule.ruleGroup : 0,
+      })),
+    );
     setManualProductIds((detail.products || []).map((product) => product.product_id).join(', '));
     setShowEditModal(true);
   };
@@ -213,7 +250,7 @@ export default function CollectionsPage() {
         .filter((rule) => rule.field.trim() && (rule.operator === 'IS_SET' || rule.operator === 'IS_NOT_SET' || rule.value.trim()))
         .map((rule) => ({
           rule_group: rule.ruleGroup,
-          field: rule.field,
+          field: rule.field.trim(),
           operator: rule.operator,
           value: rule.value || '1',
           value_type: rule.valueType,
@@ -518,40 +555,74 @@ export default function CollectionsPage() {
                     <div className="space-y-2">
                       {rules.map((rule, index) => (
                         <div key={index} className="grid grid-cols-12 gap-2">
-                          <input
+                          <select
+                            title="Rule operator"
                             className="col-span-3 rounded border bg-background px-2 py-1 text-sm"
                             value={rule.field}
                             onChange={(e) => handleRuleChange(index, { field: e.target.value })}
-                            placeholder="field"
-                          />
+                          >
+                            {RULE_FIELD_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
                           <select
                             title="Rule operator"
                             className="col-span-3 rounded border bg-background px-2 py-1 text-sm"
                             value={rule.operator}
                             onChange={(e) => handleRuleChange(index, { operator: e.target.value as CollectionRule['operator'] })}
                           >
-                            <option value="EQUALS">EQUALS</option>
-                            <option value="CONTAINS">CONTAINS</option>
-                            <option value="GREATER_THAN">GREATER_THAN</option>
-                            <option value="LESS_THAN">LESS_THAN</option>
-                            <option value="IS_SET">IS_SET</option>
-                            <option value="IS_NOT_SET">IS_NOT_SET</option>
+                            {RULE_OPERATOR_OPTIONS.map((operator) => (
+                              <option key={operator} value={operator}>
+                                {operator}
+                              </option>
+                            ))}
+                          </select>
+                          {rule.operator === 'IS_SET' || rule.operator === 'IS_NOT_SET' ? (
+                            <div className="col-span-2 rounded border bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
+                              No value needed
+                            </div>
+                          ) : (
+                            <input
+                              className="col-span-2 rounded border bg-background px-2 py-1 text-sm"
+                              value={rule.value}
+                              onChange={(e) => handleRuleChange(index, { value: e.target.value })}
+                              placeholder="value"
+                            />
+                          )}
+                          <select
+                            title="Rule value type"
+                            className="col-span-2 rounded border bg-background px-2 py-1 text-sm"
+                            value={rule.valueType}
+                            onChange={(e) => handleRuleChange(index, { valueType: e.target.value as CollectionRule['valueType'] })}
+                          >
+                            {RULE_VALUE_TYPE_OPTIONS.map((valueType) => (
+                              <option key={valueType} value={valueType}>
+                                {valueType}
+                              </option>
+                            ))}
                           </select>
                           <input
-                            className="col-span-3 rounded border bg-background px-2 py-1 text-sm"
-                            value={rule.value}
-                            onChange={(e) => handleRuleChange(index, { value: e.target.value })}
-                            placeholder="value"
+                            type="number"
+                            min={0}
+                            title="Rule group"
+                            className="col-span-1 rounded border bg-background px-2 py-1 text-sm"
+                            value={rule.ruleGroup}
+                            onChange={(e) => handleRuleChange(index, { ruleGroup: Number(e.target.value || 0) })}
                           />
                           <button
-                            className="col-span-3 rounded border px-2 py-1 text-sm hover:bg-muted"
+                            className="col-span-1 rounded border px-2 py-1 text-sm hover:bg-muted"
                             onClick={() => setRules((current) => current.filter((_, i) => i !== index))}
                           >
-                            Remove
+                            X
                           </button>
                         </div>
                       ))}
                     </div>
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      Use rule groups to combine conditions. Group 0 is the default group.
+                    </p>
                   </div>
                 )}
               </div>

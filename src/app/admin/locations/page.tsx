@@ -1,11 +1,13 @@
 'use client';
 
 import { useQuery } from '@apollo/client/react';
+import Link from 'next/link';
 import { MapPin } from 'lucide-react';
 
 import { GET_LOCATIONS, GET_MY_STORES } from '@/graphql/operations';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 
 interface GetMyStoresResponse {
   myStores: Array<{ store_id: number; name: string }>;
@@ -36,10 +38,17 @@ export default function LocationsPage() {
   return (
     <div className="space-y-6">
       <div className="rounded-2xl border bg-linear-to-r from-primary/10 via-secondary/30 to-muted px-5 py-4">
-        <h1 className="text-2xl font-bold tracking-tight">Locations</h1>
-        <p className="text-sm text-muted-foreground">
-          Inventory locations for {storeName || 'your store'}. Product country availability is configured inside each product.
-        </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Locations</h1>
+            <p className="text-sm text-muted-foreground">
+              Inventory locations for {storeName || 'your store'}. Product and storefront country lists are managed separately.
+            </p>
+          </div>
+          <Button variant="outline" nativeButton={false} render={<Link href="/admin/locations/countries" />}>
+            Manage Countries
+          </Button>
+        </div>
       </div>
 
       {!storesLoading && !storeId && <p className="text-sm text-destructive">No accessible store found for your account.</p>}

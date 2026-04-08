@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { useMutation, useQuery } from '@apollo/client/react';
 import {
   GET_CATEGORIES,
-  GET_MY_STORES,
   CREATE_CATEGORY,
   UPDATE_CATEGORY,
   DELETE_CATEGORY,
@@ -17,38 +16,103 @@ interface Category {
   name: string;
   slug: string;
   parent_id?: number | null;
+  metadata?: unknown;
 }
 
 interface CategoriesData {
   categories: Category[];
 }
 
-interface StoresData {
-  myStores: Array<{ store_id: number; name: string }>;
-}
+type CategoryMetafieldDefinition = { key: string; label: string; type: 'text' | 'textarea' };
 
 interface CategoryFormState {
   id?: number;
   name: string;
   slug: string;
   parent_id: string;
+  metafieldsText: string;
 }
 
 const EMPTY_FORM: CategoryFormState = {
   name: '',
   slug: '',
   parent_id: '',
+  metafieldsText: '',
 };
+
+function parseCategoryMetafields(metadata: unknown): CategoryMetafieldDefinition[] {
+  const parsed = typeof metadata === 'string'
+    ? (() => {
+        try {
+          return JSON.parse(metadata) as unknown;
+        } catch {
+          return null;
+        }
+      })()
+    : metadata;
+
+  const raw = (parsed as { metafields?: unknown } | null)?.metafields;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const normalized: CategoryMetafieldDefinition[] = [];
+
+  for (const item of raw) {
+    const key = String((item as { key?: unknown })?.key ?? '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_');
+    if (!key || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    normalized.push({
+      key,
+      label: String((item as { label?: unknown })?.label ?? '').trim() || key,
+      type: String((item as { type?: unknown })?.type ?? '').toLowerCase() === 'textarea' ? 'textarea' : 'text',
+    });
+  }
+
+  return normalized;
+}
+
+function metafieldsToText(definitions: CategoryMetafieldDefinition[]): string {
+  return definitions.map((field) => `${field.key}|${field.label}|${field.type}`).join('\n');
+}
+
+function parseMetafieldsText(input: string): CategoryMetafieldDefinition[] {
+  const lines = input
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  const seen = new Set<string>();
+  const parsed: CategoryMetafieldDefinition[] = [];
+
+  for (const line of lines) {
+    const [rawKey, rawLabel, rawType] = line.split('|').map((part) => part.trim());
+    const key = String(rawKey ?? '').toLowerCase().replace(/[^a-z0-9_]+/g, '_');
+    if (!key || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    parsed.push({
+      key,
+      label: rawLabel || key,
+      type: rawType?.toLowerCase() === 'textarea' ? 'textarea' : 'text',
+    });
+  }
+
+  return parsed;
+}
 
 export default function CategoriesPage() {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<CategoryFormState>(EMPTY_FORM);
 
-  const { data: storesData } = useQuery<StoresData>(GET_MY_STORES);
-  const storeId = storesData?.myStores?.[0]?.store_id || 1;
-
   const { data, loading, error, refetch } = useQuery<CategoriesData>(GET_CATEGORIES, {
-    variables: { storeId },
+    variables: {},
     fetchPolicy: 'cache-and-network',
   });
 
@@ -87,6 +151,7 @@ export default function CategoriesPage() {
       name: category.name,
       slug: category.slug,
       parent_id: category.parent_id ? String(category.parent_id) : '',
+      metafieldsText: metafieldsToText(parseCategoryMetafields(category.metadata)),
     });
     setShowModal(true);
   };
@@ -100,6 +165,7 @@ export default function CategoriesPage() {
       name: form.name.trim(),
       ...(form.slug.trim() ? { slug: form.slug.trim() } : {}),
       parent_id: form.parent_id ? Number(form.parent_id) : null,
+      metafields: parseMetafieldsText(form.metafieldsText),
     };
 
     if (form.id) {
@@ -244,6 +310,18 @@ export default function CategoriesPage() {
                     </option>
                   ))}
                 </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Category Metafields</label>
+                <textarea
+                  className="min-h-28 w-full rounded-md border bg-background px-3 py-2 font-mono text-xs"
+                  value={form.metafieldsText}
+                  onChange={(event) => setForm((current) => ({ ...current, metafieldsText: event.target.value }))}
+                  placeholder={"material|Material|text\ncare_instructions|Care Instructions|textarea"}
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  One metafield per line: key|Label|type. type can be text or textarea.
+                </p>
               </div>
             </div>
             <div className="mt-6 flex justify-end gap-3">

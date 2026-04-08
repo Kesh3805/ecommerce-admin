@@ -1,4 +1,5 @@
 import { OptionGroup, VariantRow } from '@/components/products/types';
+import { Trash2 } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -11,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { VariantPriceEditor } from '@/components/products/variant-price-editor';
 import { VariantInventoryEditor } from '@/components/products/variant-inventory-editor';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Button } from '@/components/ui/button';
 
 interface VariantTableProps {
   optionGroups: OptionGroup[];
@@ -36,6 +38,7 @@ export function VariantTable({ optionGroups, rows, onChange }: VariantTableProps
           <TableHead>Inventory</TableHead>
           <TableHead>Policy</TableHead>
           <TableHead>SKU</TableHead>
+          <TableHead className="w-16">Delete</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -75,7 +78,7 @@ export function VariantTable({ optionGroups, rows, onChange }: VariantTableProps
                   );
                 }}
               >
-                <SelectTrigger className="w-[120px]">
+                <SelectTrigger className="w-30">
                   <SelectValue placeholder="Policy" />
                 </SelectTrigger>
                 <SelectContent>
@@ -92,6 +95,17 @@ export function VariantTable({ optionGroups, rows, onChange }: VariantTableProps
                 }
                 className="w-36"
               />
+            </TableCell>
+            <TableCell>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => onChange(rows.filter((item) => item.id !== row.id))}
+                aria-label="Delete variant row"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
             </TableCell>
           </TableRow>
         ))}
