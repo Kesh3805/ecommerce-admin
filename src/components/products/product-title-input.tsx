@@ -1,11 +1,12 @@
-import { FieldError, FieldValues, UseFormRegister } from 'react-hook-form';
+import { FieldError, UseFormRegister } from 'react-hook-form';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { ProductEditorFormValues } from '@/components/products/types';
 
 interface ProductTitleInputProps {
-  register: UseFormRegister<FieldValues>;
+  register: UseFormRegister<ProductEditorFormValues>;
   error?: FieldError;
 }
 

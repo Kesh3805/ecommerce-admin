@@ -434,7 +434,7 @@ export default function ProductImportPage() {
         <CardHeader>
           <CardTitle>Upload CSV</CardTitle>
           <CardDescription>
-            Parent rows are inferred from product fields (title/category/options). Child variant rows are inferred from variant_* fields and linked by handle/parent_handle.
+            Parent rows are inferred from product fields (title/category/options). Child variant rows are inferred from variant_* fields and linked by handle/parent_handle. Category slugs must already exist in admin taxonomy.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

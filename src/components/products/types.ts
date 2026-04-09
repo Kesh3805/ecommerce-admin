@@ -20,6 +20,7 @@ export interface VariantRow {
   price: number;
   inventory: number;
   inventoryPolicy: 'DENY' | 'CONTINUE';
+  mediaUrls: string[];
 }
 
 export interface CategoryMetafield {
@@ -28,8 +29,26 @@ export interface CategoryMetafield {
   type: 'text' | 'textarea';
 }
 
+export interface CategoryOptionTemplate {
+  name: string;
+  values: string[];
+}
+
 export interface CategoryOption {
   id: string;
   label: string;
-  metafields: CategoryMetafield[];
+  optionTemplates: CategoryOptionTemplate[];
+  parentId?: string | null;
+  depth?: number;
+}
+
+export interface ProductEditorFormValues {
+  title: string;
+  description?: string;
+  brand?: string;
+  categoryId?: string;
+  tags?: string;
+  seoTitle?: string;
+  seoDescription?: string;
+  seoHandle?: string;
 }

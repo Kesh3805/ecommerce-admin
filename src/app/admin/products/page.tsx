@@ -27,6 +27,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 
 interface Product {
   id: number;
+  handle?: string;
   title: string;
   status: 'DRAFT' | 'ACTIVE' | 'ARCHIVED';
   brand?: string;
@@ -79,6 +80,7 @@ function ProductTableSkeleton() {
               <Skeleton className="h-4 w-32" />
             </div>
           </TableCell>
+          <TableCell><Skeleton className="h-4 w-28" /></TableCell>
           <TableCell><Skeleton className="h-5 w-16" /></TableCell>
           <TableCell><Skeleton className="h-4 w-24" /></TableCell>
           <TableCell><Skeleton className="h-4 w-16" /></TableCell>
@@ -194,6 +196,7 @@ export default function ProductsPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Product</TableHead>
+                <TableHead>Slug</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Brand</TableHead>
                 <TableHead>Created</TableHead>
@@ -206,7 +209,7 @@ export default function ProductsPage() {
             ) : error ? (
               <TableBody>
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                     Error loading products. Make sure the backend is running.
                   </TableCell>
                 </TableRow>
@@ -214,7 +217,7 @@ export default function ProductsPage() {
             ) : products.length === 0 ? (
               <TableBody>
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8">
+                  <TableCell colSpan={7} className="text-center py-8">
                     <div className="flex flex-col items-center gap-2">
                       <p className="text-muted-foreground">No products yet</p>
                       <Button
@@ -255,6 +258,9 @@ export default function ProductsPage() {
                             {product.title}
                           </Link>
                         </div>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {product.handle || '—'}
                       </TableCell>
                       <TableCell>
                         <ProductStatusBadge status={product.status} />

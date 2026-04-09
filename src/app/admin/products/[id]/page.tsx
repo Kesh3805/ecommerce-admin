@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { ArrowLeft, Save, Trash2, Plus, Loader2 } from 'lucide-react';
+import { ArrowLeft, Save, Trash2, Plus, Loader2, X } from 'lucide-react';
 import Link from 'next/link';
 
 import {
@@ -14,6 +14,7 @@ import {
   GET_VARIANTS,
   GET_PRODUCT_MEDIA,
   GET_AVAILABLE_COUNTRIES,
+  GET_BRANDS,
   UPDATE_PRODUCT,
   DELETE_PRODUCT,
   ADD_PRODUCT_OPTION,
@@ -103,6 +104,7 @@ interface Variant {
   price?: number;
   compareAtPrice?: number;
   weight?: number;
+  media_urls?: string[];
   inventoryPolicy: string;
   inventoryItemId?: number;
   inventory_item?: {
@@ -125,6 +127,8 @@ interface EditableVariantState {
   compareAtPrice: string;
   inventoryPolicy: 'DENY' | 'CONTINUE';
   inventory: string;
+  mediaUrls: string[];
+  mediaUploading: boolean;
   saving: boolean;
   error?: string;
 }
@@ -154,6 +158,10 @@ interface GetAvailableCountriesResponse {
   availableCountries: string[];
 }
 
+interface GetBrandsResponse {
+  brands: Array<{ name: string }>;
+}
+
 interface ProductMediaRecord {
   id: number;
   url: string;
@@ -179,6 +187,14 @@ function toAbsoluteMediaUrl(url: string): string {
   } catch {
     return url;
   }
+}
+
+function normalizeMediaUrls(urls: string[]): string[] {
+  return [...new Set(urls.map((url) => toAbsoluteMediaUrl(url.trim())).filter((url) => url.length > 0))];
+}
+
+function parseMediaUrls(input: string): string[] {
+  return normalizeMediaUrls(input.split(/[\n,|]/g));
 }
 
 function ProductStatusBadge({ status }: { status: string }) {
@@ -366,6 +382,8 @@ function VariantsTable({
     inventory: Number.isFinite(variant.inventory_item?.total_available)
       ? String(variant.inventory_item?.total_available)
       : '0',
+    mediaUrls: normalizeMediaUrls(Array.isArray(variant.media_urls) ? variant.media_urls : []),
+    mediaUploading: false,
     saving: false,
   });
 
@@ -450,6 +468,7 @@ function VariantsTable({
             price: parsedPrice,
             compare_at_price: parsedCompareAt,
             inventory_policy: draft.inventoryPolicy,
+            media_urls: draft.mediaUrls,
           },
         },
       });
@@ -514,6 +533,69 @@ function VariantsTable({
     }
   };
 
+  const handleUploadVariantMedia = async (variantId: number, files: FileList | null) => {
+    if (!files || files.length === 0) {
+      return;
+    }
+
+    updateEditableVariant(variantId, (current) => ({
+      ...current,
+      mediaUploading: true,
+      error: undefined,
+    }));
+
+    try {
+      const graphQlUrl = process.env.NEXT_PUBLIC_GRAPHQL_URL || 'http://localhost:4100/graphql';
+      const apiBaseUrl = new URL(graphQlUrl).origin;
+      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_access_token') : null;
+      const uploadedUrls: string[] = [];
+
+      for (const file of Array.from(files)) {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await fetch(`${apiBaseUrl}/api/media/upload`, {
+          method: 'POST',
+          body: formData,
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(errorText || `Failed to upload ${file.name}`);
+        }
+
+        const payload = (await response.json()) as { url?: string };
+        if (!payload.url) {
+          throw new Error(`Upload endpoint did not return a URL for ${file.name}`);
+        }
+
+        uploadedUrls.push(toAbsoluteMediaUrl(payload.url));
+      }
+
+      updateEditableVariant(variantId, (current) => ({
+        ...current,
+        mediaUploading: false,
+        mediaUrls: normalizeMediaUrls([...(current.mediaUrls || []), ...uploadedUrls]),
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to upload variant media.';
+      updateEditableVariant(variantId, (current) => ({
+        ...current,
+        mediaUploading: false,
+        error: message,
+      }));
+    }
+  };
+
+  const handleRemoveVariantMedia = (variantId: number, mediaIndex: number) => {
+    updateEditableVariant(variantId, (current) => ({
+      ...current,
+      mediaUrls: current.mediaUrls.filter((_, index) => index !== mediaIndex),
+      error: undefined,
+    }));
+  };
+
   const canGenerate = options.length > 0 && variants.length === 0;
 
   return (
@@ -552,6 +634,7 @@ function VariantsTable({
                   <TableHead>Compare At</TableHead>
                   <TableHead>Policy</TableHead>
                   <TableHead>Inventory</TableHead>
+                  <TableHead>Media</TableHead>
                   <TableHead className="w-32">Action</TableHead>
                 </TableRow>
               </TableHeader>
@@ -639,6 +722,76 @@ function VariantsTable({
                       }
                       className="w-24"
                     />
+                  </TableCell>
+                  <TableCell>
+                    <div className="space-y-2">
+                      {(editableVariants[variant.id]?.mediaUrls || []).length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {(editableVariants[variant.id]?.mediaUrls || []).map((url, index) => (
+                            <div key={`${variant.id}-media-${index}`} className="relative">
+                              <img
+                                src={url}
+                                alt={`${variant.title} media ${index + 1}`}
+                                className="h-10 w-10 rounded border object-cover"
+                              />
+                              <button
+                                type="button"
+                                aria-label={`Remove media ${index + 1} for ${variant.title}`}
+                                className="absolute -right-2 -top-2 inline-flex h-4 w-4 items-center justify-center rounded-full border bg-background text-muted-foreground hover:text-destructive"
+                                onClick={() => handleRemoveVariantMedia(variant.id, index)}
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">No media</p>
+                      )}
+
+                      <Input
+                        value={(editableVariants[variant.id]?.mediaUrls || []).join(', ')}
+                        placeholder="Image URLs (comma/new line separated)"
+                        onChange={(event) =>
+                          updateEditableVariant(variant.id, (current) => ({
+                            ...current,
+                            mediaUrls: parseMediaUrls(event.target.value),
+                            error: undefined,
+                          }))
+                        }
+                        className="w-72"
+                      />
+
+                      <div className="flex items-center gap-2">
+                        <input
+                          id={`variant-media-upload-${variant.id}`}
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          className="hidden"
+                          aria-label="Upload variant media"
+                          title="Upload variant media"
+                          onChange={(event) => {
+                            void handleUploadVariantMedia(variant.id, event.target.files);
+                            event.currentTarget.value = '';
+                          }}
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={editableVariants[variant.id]?.mediaUploading}
+                          onClick={() => {
+                            document.getElementById(`variant-media-upload-${variant.id}`)?.click();
+                          }}
+                        >
+                          {editableVariants[variant.id]?.mediaUploading ? (
+                            <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                          ) : null}
+                          Upload images
+                        </Button>
+                      </div>
+                    </div>
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
@@ -735,6 +888,21 @@ export default function ProductDetailPage({
     skip: !product?.storeId,
   });
 
+  const { data: brandsData } = useQuery<GetBrandsResponse>(GET_BRANDS, {
+    variables: { storeId: product?.storeId },
+    skip: !product?.storeId,
+    fetchPolicy: 'no-cache',
+  });
+
+  const brandOptions = useMemo(
+    () =>
+      [...new Set((brandsData?.brands ?? [])
+        .map((item) => String(item.name ?? '').trim())
+        .filter((brand) => brand.length > 0))]
+        .sort((a, b) => a.localeCompare(b)),
+    [brandsData],
+  );
+
   const configuredCountryCodes = useMemo(() => {
     const normalized = normalizeCountryCodes(availableCountriesData?.availableCountries ?? []);
     if (normalized.length > 0) {
@@ -773,6 +941,8 @@ export default function ProductDetailPage({
     register,
     handleSubmit,
     reset,
+    setValue,
+    watch,
     formState: { errors, isDirty },
   } = useForm<ProductFormData>({
     resolver: zodResolver(productSchema),
@@ -785,6 +955,8 @@ export default function ProductDetailPage({
       seoHandle: '',
     },
   });
+
+  const selectedBrand = (watch('brand') || '').trim();
 
   useEffect(() => {
     if (!product) {
@@ -1151,7 +1323,29 @@ export default function ProductDetailPage({
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="brand">Brand</Label>
-                    <Input id="brand" {...register('brand')} />
+                    <input type="hidden" {...register('brand')} />
+                    <Select
+                      value={selectedBrand || '__none__'}
+                      onValueChange={(value) => {
+                        const normalized = !value || value === '__none__' ? '' : value;
+                        setValue('brand', normalized, { shouldDirty: true });
+                      }}
+                    >
+                      <SelectTrigger id="brand" className="w-full">
+                        <SelectValue placeholder="Select brand" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">No brand</SelectItem>
+                        {brandOptions.map((brand) => (
+                          <SelectItem key={brand} value={brand}>
+                            {brand}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {brandOptions.length === 0 && (
+                      <p className="text-xs text-muted-foreground">No saved brands yet for this store.</p>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label>Category</Label>

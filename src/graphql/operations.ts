@@ -52,6 +52,7 @@ export const PRODUCT_FRAGMENT = gql`
 export const PRODUCT_LIST_FRAGMENT = gql`
   fragment ProductListFields on Product {
     id: product_id
+    handle
     title
     status
     brand
@@ -500,6 +501,7 @@ export const GET_COLLECTION = gql`
       metaDescription: meta_description
       products(limit: 100) {
         product_id
+        handle
         title
         status
       }

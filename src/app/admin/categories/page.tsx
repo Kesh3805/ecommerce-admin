@@ -1,15 +1,16 @@
 'use client';
 
-import { useState } from 'react';
-import { useMutation, useQuery } from '@apollo/client/react';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@apollo/client/react';
+import { GET_CATEGORIES } from '@/graphql/operations';
+import { Loader2, Tags } from 'lucide-react';
 import {
-  GET_CATEGORIES,
-  CREATE_CATEGORY,
-  UPDATE_CATEGORY,
-  DELETE_CATEGORY,
-} from '@/graphql/operations';
-import { Button } from '@/components/ui/button';
-import { Loader2, Plus, Tags, Pencil, Trash2 } from 'lucide-react';
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 interface Category {
   id: number;
@@ -23,24 +24,38 @@ interface CategoriesData {
   categories: Category[];
 }
 
-type CategoryMetafieldDefinition = { key: string; label: string; type: 'text' | 'textarea' };
-
-interface CategoryFormState {
-  id?: number;
+interface CategoryNode {
+  id: number;
   name: string;
   slug: string;
-  parent_id: string;
-  metafieldsText: string;
+  parentId: number | null;
+  metadata?: unknown;
+  path: string[];
+  depth: number;
 }
 
-const EMPTY_FORM: CategoryFormState = {
-  name: '',
-  slug: '',
-  parent_id: '',
-  metafieldsText: '',
-};
+const UNSELECTED_CATEGORY_VALUE = '__unselected__';
 
-function parseCategoryMetafields(metadata: unknown): CategoryMetafieldDefinition[] {
+function categoryDepthPaddingClass(depth: number): string {
+  switch (depth) {
+    case 0:
+      return 'pl-0';
+    case 1:
+      return 'pl-3';
+    case 2:
+      return 'pl-6';
+    case 3:
+      return 'pl-9';
+    default:
+      return 'pl-12';
+  }
+}
+
+function parseCategoryPathFromMetadata(metadata: unknown): string[] {
+  if (!metadata) {
+    return [];
+  }
+
   const parsed = typeof metadata === 'string'
     ? (() => {
         try {
@@ -51,164 +66,286 @@ function parseCategoryMetafields(metadata: unknown): CategoryMetafieldDefinition
       })()
     : metadata;
 
-  const raw = (parsed as { metafields?: unknown } | null)?.metafields;
-  if (!Array.isArray(raw)) {
+  const rawPath = (parsed as { taxonomy?: { path_tree?: unknown } } | null)?.taxonomy?.path_tree;
+  if (typeof rawPath !== 'string') {
     return [];
   }
 
-  const seen = new Set<string>();
-  const normalized: CategoryMetafieldDefinition[] = [];
-
-  for (const item of raw) {
-    const key = String((item as { key?: unknown })?.key ?? '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_');
-    if (!key || seen.has(key)) {
-      continue;
-    }
-
-    seen.add(key);
-    normalized.push({
-      key,
-      label: String((item as { label?: unknown })?.label ?? '').trim() || key,
-      type: String((item as { type?: unknown })?.type ?? '').toLowerCase() === 'textarea' ? 'textarea' : 'text',
-    });
-  }
-
-  return normalized;
+  return rawPath.split('>').map((segment) => segment.trim()).filter((segment) => segment.length > 0);
 }
 
-function metafieldsToText(definitions: CategoryMetafieldDefinition[]): string {
-  return definitions.map((field) => `${field.key}|${field.label}|${field.type}`).join('\n');
-}
+function parseMetadata(metadata: unknown): {
+  metafieldCount: number;
+  templateCount: number;
+  templateVersion: number | null;
+  managedBy: string;
+  isPredefined: boolean;
+} {
+  const parsed = typeof metadata === 'string'
+    ? (() => {
+        try {
+          return JSON.parse(metadata) as unknown;
+        } catch {
+          return null;
+        }
+      })()
+    : metadata;
 
-function parseMetafieldsText(input: string): CategoryMetafieldDefinition[] {
-  const lines = input
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+  const normalized = (parsed as { metafields?: unknown; option_templates?: unknown; optionTemplates?: unknown } | null) ?? null;
+  const rawMetafields = normalized?.metafields;
+  const rawTemplates = normalized?.option_templates ?? normalized?.optionTemplates;
+  const templateVersionRaw = (parsed as { template_version?: unknown } | null)?.template_version;
+  const managedByRaw = (parsed as { managed_by?: unknown } | null)?.managed_by;
+  const isPredefinedRaw = (parsed as { is_predefined?: unknown } | null)?.is_predefined;
 
-  const seen = new Set<string>();
-  const parsed: CategoryMetafieldDefinition[] = [];
-
-  for (const line of lines) {
-    const [rawKey, rawLabel, rawType] = line.split('|').map((part) => part.trim());
-    const key = String(rawKey ?? '').toLowerCase().replace(/[^a-z0-9_]+/g, '_');
-    if (!key || seen.has(key)) {
-      continue;
-    }
-
-    seen.add(key);
-    parsed.push({
-      key,
-      label: rawLabel || key,
-      type: rawType?.toLowerCase() === 'textarea' ? 'textarea' : 'text',
-    });
-  }
-
-  return parsed;
+  return {
+    metafieldCount: Array.isArray(rawMetafields) ? rawMetafields.length : 0,
+    templateCount: Array.isArray(rawTemplates) ? rawTemplates.length : 0,
+    templateVersion: Number.isInteger(templateVersionRaw) ? Number(templateVersionRaw) : null,
+    managedBy: typeof managedByRaw === 'string' && managedByRaw.trim().length > 0 ? managedByRaw : 'unknown',
+    isPredefined: isPredefinedRaw === true,
+  };
 }
 
 export default function CategoriesPage() {
-  const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState<CategoryFormState>(EMPTY_FORM);
-
-  const { data, loading, error, refetch } = useQuery<CategoriesData>(GET_CATEGORIES, {
+  const { data, loading, error } = useQuery<CategoriesData>(GET_CATEGORIES, {
     variables: {},
     fetchPolicy: 'cache-and-network',
   });
-
-  const [createCategory, { loading: creating }] = useMutation(CREATE_CATEGORY, {
-    onCompleted: () => {
-      setShowModal(false);
-      setForm(EMPTY_FORM);
-      refetch();
-    },
-  });
-
-  const [updateCategory, { loading: updating }] = useMutation(UPDATE_CATEGORY, {
-    onCompleted: () => {
-      setShowModal(false);
-      setForm(EMPTY_FORM);
-      refetch();
-    },
-  });
-
-  const [deleteCategory, { loading: deleting }] = useMutation(DELETE_CATEGORY, {
-    onCompleted: () => refetch(),
-  });
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>(UNSELECTED_CATEGORY_VALUE);
 
   const categories = data?.categories ?? [];
 
-  const categoryOptions = categories.filter((category) => category.id !== form.id);
-
-  const handleCreate = () => {
-    setForm(EMPTY_FORM);
-    setShowModal(true);
-  };
-
-  const handleEdit = (category: Category) => {
-    setForm({
-      id: category.id,
-      name: category.name,
-      slug: category.slug,
-      parent_id: category.parent_id ? String(category.parent_id) : '',
-      metafieldsText: metafieldsToText(parseCategoryMetafields(category.metadata)),
-    });
-    setShowModal(true);
-  };
-
-  const handleSave = async () => {
-    if (!form.name.trim()) {
-      return;
+  const hierarchy = useMemo(() => {
+    const byId = new Map<number, Category>();
+    for (const category of categories) {
+      byId.set(category.id, category);
     }
 
-    const payload = {
-      name: form.name.trim(),
-      ...(form.slug.trim() ? { slug: form.slug.trim() } : {}),
-      parent_id: form.parent_id ? Number(form.parent_id) : null,
-      metafields: parseMetafieldsText(form.metafieldsText),
+    const parentMap = new Map<number, number | null>();
+    const childrenByParentId = new Map<number | null, Category[]>();
+
+    for (const category of categories) {
+      const normalizedParentId = Number.isInteger(category.parent_id) && byId.has(Number(category.parent_id))
+        ? Number(category.parent_id)
+        : null;
+
+      parentMap.set(category.id, normalizedParentId);
+
+      const siblings = childrenByParentId.get(normalizedParentId) ?? [];
+      siblings.push(category);
+      childrenByParentId.set(normalizedParentId, siblings);
+    }
+
+    const sortByName = (left: Category, right: Category) => left.name.localeCompare(right.name);
+    for (const [parentId, siblings] of childrenByParentId.entries()) {
+      childrenByParentId.set(parentId, [...siblings].sort(sortByName));
+    }
+
+    const pathCache = new Map<number, string[]>();
+    const resolvePath = (category: Category, trail = new Set<number>()): string[] => {
+      const cached = pathCache.get(category.id);
+      if (cached) {
+        return cached;
+      }
+
+      const metadataPath = parseCategoryPathFromMetadata(category.metadata);
+      if (metadataPath.length > 0) {
+        pathCache.set(category.id, metadataPath);
+        return metadataPath;
+      }
+
+      if (trail.has(category.id)) {
+        return [category.name];
+      }
+
+      const nextTrail = new Set(trail);
+      nextTrail.add(category.id);
+
+      const parentId = parentMap.get(category.id) ?? null;
+      if (parentId && byId.has(parentId)) {
+        const parent = byId.get(parentId)!;
+        const resolved = [...resolvePath(parent, nextTrail), category.name];
+        pathCache.set(category.id, resolved);
+        return resolved;
+      }
+
+      const rootPath = [category.name];
+      pathCache.set(category.id, rootPath);
+      return rootPath;
     };
 
-    if (form.id) {
-      await updateCategory({
-        variables: {
-          id: form.id,
-          input: payload,
-        },
+    const nodeById = new Map<number, CategoryNode>();
+    for (const category of categories) {
+      const path = resolvePath(category);
+      nodeById.set(category.id, {
+        id: category.id,
+        name: category.name,
+        slug: category.slug,
+        parentId: parentMap.get(category.id) ?? null,
+        metadata: category.metadata,
+        path,
+        depth: Math.max(path.length - 1, 0),
       });
+    }
+
+    const childrenByParentNodeId = new Map<number | null, CategoryNode[]>();
+    for (const [parentId, siblings] of childrenByParentId.entries()) {
+      childrenByParentNodeId.set(
+        parentId,
+        siblings
+          .map((sibling) => nodeById.get(sibling.id))
+          .filter((node): node is CategoryNode => Boolean(node)),
+      );
+    }
+
+    const orderedNodes: CategoryNode[] = [];
+    const visited = new Set<number>();
+
+    const walk = (parentId: number | null): void => {
+      const children = childrenByParentNodeId.get(parentId) ?? [];
+      for (const child of children) {
+        if (visited.has(child.id)) {
+          continue;
+        }
+
+        visited.add(child.id);
+        orderedNodes.push(child);
+        walk(child.id);
+      }
+    };
+
+    walk(null);
+
+    for (const node of [...nodeById.values()].sort((left, right) => left.name.localeCompare(right.name))) {
+      if (visited.has(node.id)) {
+        continue;
+      }
+
+      visited.add(node.id);
+      orderedNodes.push(node);
+      walk(node.id);
+    }
+
+    return {
+      nodeById,
+      orderedNodes,
+      childrenByParentId: childrenByParentNodeId,
+    };
+  }, [categories]);
+
+  const selectedPath = useMemo(() => {
+    if (selectedCategoryId === UNSELECTED_CATEGORY_VALUE) {
+      return [] as CategoryNode[];
+    }
+
+    const selectedId = Number(selectedCategoryId);
+    if (!Number.isInteger(selectedId) || !hierarchy.nodeById.has(selectedId)) {
+      return [] as CategoryNode[];
+    }
+
+    const path: CategoryNode[] = [];
+    const visited = new Set<number>();
+    let current = hierarchy.nodeById.get(selectedId) ?? null;
+
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      path.push(current);
+      current = current.parentId && hierarchy.nodeById.has(current.parentId)
+        ? hierarchy.nodeById.get(current.parentId) ?? null
+        : null;
+    }
+
+    return path.reverse();
+  }, [hierarchy.nodeById, selectedCategoryId]);
+
+  const categoryLevels = useMemo(() => {
+    const levels: CategoryNode[][] = [];
+    levels.push(hierarchy.childrenByParentId.get(null) ?? []);
+
+    for (const selectedNode of selectedPath) {
+      const children = hierarchy.childrenByParentId.get(selectedNode.id) ?? [];
+      if (children.length === 0) {
+        break;
+      }
+
+      levels.push(children);
+    }
+
+    return levels;
+  }, [hierarchy.childrenByParentId, selectedPath]);
+
+  const visibleCategoryIds = useMemo(() => {
+    if (selectedCategoryId === UNSELECTED_CATEGORY_VALUE) {
+      return null as Set<number> | null;
+    }
+
+    const selectedId = Number(selectedCategoryId);
+    if (!Number.isInteger(selectedId) || !hierarchy.nodeById.has(selectedId)) {
+      return null as Set<number> | null;
+    }
+
+    const ids = new Set<number>();
+    const stack = [selectedId];
+    while (stack.length > 0) {
+      const id = stack.pop()!;
+      if (ids.has(id)) {
+        continue;
+      }
+
+      ids.add(id);
+      const children = hierarchy.childrenByParentId.get(id) ?? [];
+      for (const child of children) {
+        stack.push(child.id);
+      }
+    }
+
+    return ids;
+  }, [hierarchy.childrenByParentId, hierarchy.nodeById, selectedCategoryId]);
+
+  const displayCategories = useMemo(() => {
+    if (!visibleCategoryIds) {
+      return hierarchy.orderedNodes;
+    }
+
+    return hierarchy.orderedNodes.filter((category) => visibleCategoryIds.has(category.id));
+  }, [hierarchy.orderedNodes, visibleCategoryIds]);
+
+  const handleCategoryLevelChange = (levelIndex: number, value: string): void => {
+    if (value === UNSELECTED_CATEGORY_VALUE) {
+      if (levelIndex === 0) {
+        setSelectedCategoryId(UNSELECTED_CATEGORY_VALUE);
+        return;
+      }
+
+      const parentSelection = selectedPath[levelIndex - 1];
+      setSelectedCategoryId(parentSelection ? String(parentSelection.id) : UNSELECTED_CATEGORY_VALUE);
       return;
     }
 
-    await createCategory({
-      variables: {
-        input: payload,
-      },
-    });
+    setSelectedCategoryId(value);
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('Delete this category?')) {
-      return;
+  const selectedCategoryLabel = useMemo(() => {
+    if (selectedPath.length === 0) {
+      return 'All categories';
     }
 
-    await deleteCategory({ variables: { id } });
-  };
-
-  const saving = creating || updating;
+    return selectedPath.map((node) => node.name).join(' > ');
+  }, [selectedPath]);
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="flex items-center gap-2 text-3xl font-bold tracking-tight">
-            <Tags className="h-8 w-8" />
-            Categories
-          </h1>
-          <p className="mt-1 text-muted-foreground">Manage category taxonomy for storefront filtering and merchandising.</p>
-        </div>
-        <Button onClick={handleCreate}>
-          <Plus className="mr-2 h-4 w-4" />
-          New Category
-        </Button>
+      <div className="space-y-2">
+        <h1 className="flex items-center gap-2 text-3xl font-bold tracking-tight">
+          <Tags className="h-8 w-8" />
+          Categories
+        </h1>
+        <p className="text-muted-foreground">Category taxonomy is managed in the database only. App-level create/edit/delete is disabled.</p>
+      </div>
+
+      <div className="rounded-lg border border-amber-300/50 bg-amber-50/60 p-4 text-sm text-amber-900">
+        Use DB scripts to maintain taxonomy and templates. Recommended: scripts/seed-enriched-categories.js.
       </div>
 
       {loading && !data && (
@@ -223,10 +360,57 @@ export default function CategoriesPage() {
         </div>
       )}
 
+      {categories.length > 0 && (
+        <div className="rounded-lg border bg-card p-4">
+          <h2 className="text-base font-semibold">Category Explorer</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Navigate taxonomy step by step (parent → child → sub-child).</p>
+
+          <div className="mt-4 space-y-3">
+            {categoryLevels.map((levelCategories, levelIndex) => {
+              const selectedValue = selectedPath[levelIndex] ? String(selectedPath[levelIndex].id) : UNSELECTED_CATEGORY_VALUE;
+
+              return (
+                <div key={`level-${levelIndex}`} className="space-y-1">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {levelIndex === 0 ? 'Parent Category' : `Subcategory Level ${levelIndex + 1}`}
+                  </p>
+                  <Select
+                    value={selectedValue}
+                    onValueChange={(value) => {
+                      if (value) {
+                        handleCategoryLevelChange(levelIndex, value);
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="w-full md:max-w-xl">
+                      <SelectValue placeholder={levelIndex === 0 ? 'Select parent category' : 'Select subcategory'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={UNSELECTED_CATEGORY_VALUE}>
+                        {levelIndex === 0 ? 'All categories' : 'Keep parent selection'}
+                      </SelectItem>
+                      {levelCategories.map((category) => (
+                        <SelectItem key={category.id} value={String(category.id)}>
+                          {category.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              );
+            })}
+          </div>
+
+          <p className="mt-4 text-sm text-muted-foreground">
+            Current selection: <span className="font-medium text-foreground">{selectedCategoryLabel}</span>
+          </p>
+        </div>
+      )}
+
       {!loading && categories.length === 0 ? (
         <div className="rounded-lg border bg-card p-12 text-center">
-          <h3 className="text-lg font-semibold">No categories yet</h3>
-          <p className="mt-2 text-muted-foreground">Create your first category to organize catalog navigation and filters.</p>
+          <h3 className="text-lg font-semibold">No categories found</h3>
+          <p className="mt-2 text-muted-foreground">Seed predefined categories in DB before onboarding products.</p>
         </div>
       ) : (
         <div className="rounded-lg border bg-card">
@@ -236,104 +420,34 @@ export default function CategoriesPage() {
                 <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Name</th>
                 <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Slug</th>
                 <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Parent</th>
-                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Actions</th>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Path</th>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Option Templates</th>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Metafields</th>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Template Info</th>
               </tr>
             </thead>
             <tbody className="divide-y">
-              {categories.map((category) => {
-                const parent = categories.find((candidate) => candidate.id === category.parent_id);
-
+              {displayCategories.map((category) => {
+                const { metafieldCount, templateCount, templateVersion, managedBy, isPredefined } = parseMetadata(category.metadata);
+                const parentName = category.parentId ? hierarchy.nodeById.get(category.parentId)?.name ?? '-' : '-';
                 return (
                   <tr key={category.id} className="hover:bg-muted/40">
-                    <td className="px-6 py-4 font-medium">{category.name}</td>
+                    <td className="px-6 py-4 font-medium">
+                      <span className={categoryDepthPaddingClass(category.depth)}>{category.name}</span>
+                    </td>
                     <td className="px-6 py-4 text-sm text-muted-foreground">{category.slug}</td>
-                    <td className="px-6 py-4 text-sm text-muted-foreground">{parent?.name || '-'}</td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center justify-end gap-2">
-                        <Button size="sm" variant="ghost" onClick={() => handleEdit(category)}>
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="text-destructive hover:text-destructive"
-                          disabled={deleting}
-                          onClick={() => handleDelete(category.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
+                    <td className="px-6 py-4 text-sm text-muted-foreground">{parentName}</td>
+                    <td className="px-6 py-4 text-sm text-muted-foreground">{category.path.join(' > ')}</td>
+                    <td className="px-6 py-4 text-sm text-muted-foreground">{templateCount}</td>
+                    <td className="px-6 py-4 text-sm text-muted-foreground">{metafieldCount}</td>
+                    <td className="px-6 py-4 text-xs text-muted-foreground">
+                      v{templateVersion ?? '-'} | {managedBy} | {isPredefined ? 'predefined' : 'custom'}
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-        </div>
-      )}
-
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-lg rounded-lg bg-card p-6 shadow-xl">
-            <h2 className="text-xl font-semibold">{form.id ? 'Edit Category' : 'Create Category'}</h2>
-            <div className="mt-4 space-y-4">
-              <div>
-                <label className="mb-1 block text-sm font-medium">Name</label>
-                <input
-                  className="w-full rounded-md border bg-background px-3 py-2"
-                  value={form.name}
-                  onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                  placeholder="Category name"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium">Slug (optional)</label>
-                <input
-                  className="w-full rounded-md border bg-background px-3 py-2"
-                  value={form.slug}
-                  onChange={(event) => setForm((current) => ({ ...current, slug: event.target.value }))}
-                  placeholder="category-slug"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium">Parent Category</label>
-                <select
-                  title="Parent category"
-                  className="w-full rounded-md border bg-background px-3 py-2"
-                  value={form.parent_id}
-                  onChange={(event) => setForm((current) => ({ ...current, parent_id: event.target.value }))}
-                >
-                  <option value="">No parent</option>
-                  {categoryOptions.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium">Category Metafields</label>
-                <textarea
-                  className="min-h-28 w-full rounded-md border bg-background px-3 py-2 font-mono text-xs"
-                  value={form.metafieldsText}
-                  onChange={(event) => setForm((current) => ({ ...current, metafieldsText: event.target.value }))}
-                  placeholder={"material|Material|text\ncare_instructions|Care Instructions|textarea"}
-                />
-                <p className="mt-1 text-xs text-muted-foreground">
-                  One metafield per line: key|Label|type. type can be text or textarea.
-                </p>
-              </div>
-            </div>
-            <div className="mt-6 flex justify-end gap-3">
-              <Button variant="outline" onClick={() => setShowModal(false)}>
-                Cancel
-              </Button>
-              <Button disabled={saving || !form.name.trim()} onClick={handleSave}>
-                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                {form.id ? 'Save Changes' : 'Create Category'}
-              </Button>
-            </div>
-          </div>
         </div>
       )}
     </div>

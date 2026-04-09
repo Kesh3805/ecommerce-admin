@@ -10,6 +10,7 @@ import { useQuery, useMutation, useLazyQuery } from '@apollo/client/react';
 import {
   GET_COLLECTIONS,
   GET_COLLECTION,
+  GET_PRODUCTS,
   GET_MY_STORES,
 } from '@/graphql/operations';
 import {
@@ -63,13 +64,24 @@ interface CollectionDetailData {
     imageUrl?: string;
     metaTitle?: string;
     metaDescription?: string;
-    products?: Array<{ product_id: number; title: string; status: string }>;
+    products?: Array<{ product_id: number; handle?: string; title: string; status: string }>;
     rules?: CollectionRule[];
   };
 }
 
 interface CollectionsData {
   collections: Collection[];
+}
+
+interface ActiveProductsData {
+  products: {
+    items: Array<{
+      id: number;
+      handle?: string;
+      title: string;
+      status: 'DRAFT' | 'ACTIVE' | 'ARCHIVED';
+    }>;
+  };
 }
 
 interface StoresData {
@@ -127,7 +139,8 @@ export default function CollectionsPage() {
     type: 'MANUAL' as 'MANUAL' | 'AUTOMATED',
   });
   const [rules, setRules] = useState<CollectionRule[]>([]);
-  const [manualProductIds, setManualProductIds] = useState<string>('');
+  const [selectedManualProductIds, setSelectedManualProductIds] = useState<number[]>([]);
+  const [manualProductSearch, setManualProductSearch] = useState('');
 
   // Fetch stores to get current store ID
   const { data: storesData } = useQuery<StoresData>(GET_MY_STORES);
@@ -136,6 +149,20 @@ export default function CollectionsPage() {
   // Fetch collections
   const { data, loading, error, refetch } = useQuery<CollectionsData>(GET_COLLECTIONS, {
     variables: { filter: { store_id: storeId, is_visible: true } },
+    fetchPolicy: 'network-only',
+  });
+
+  const { data: activeProductsData, loading: loadingActiveProducts } = useQuery<ActiveProductsData>(GET_PRODUCTS, {
+    variables: {
+      filter: {
+        store_id: storeId,
+        status: 'ACTIVE',
+      },
+      pagination: {
+        page: 1,
+        limit: 500,
+      },
+    },
     fetchPolicy: 'cache-and-network',
   });
 
@@ -211,7 +238,12 @@ export default function CollectionsPage() {
         ruleGroup: Number.isInteger(rule.ruleGroup) ? rule.ruleGroup : 0,
       })),
     );
-    setManualProductIds((detail.products || []).map((product) => product.product_id).join(', '));
+    setSelectedManualProductIds(
+      (detail.products || [])
+        .filter((product) => product.status === 'ACTIVE')
+        .map((product) => product.product_id),
+    );
+    setManualProductSearch('');
     setShowEditModal(true);
   };
 
@@ -226,9 +258,7 @@ export default function CollectionsPage() {
       return;
     }
 
-    const parsedProductIds = manualProductIds
-      .split(',')
-      .map((value) => Number(value.trim()))
+    const parsedProductIds = Array.from(new Set(selectedManualProductIds))
       .filter((value) => Number.isInteger(value) && value > 0);
 
     await updateCollection({
@@ -268,6 +298,18 @@ export default function CollectionsPage() {
   };
 
   const collections = data?.collections || [];
+  const activeProducts = activeProductsData?.products?.items || [];
+  const filteredActiveProducts = activeProducts.filter((product) => {
+    const query = manualProductSearch.trim().toLowerCase();
+    if (!query) {
+      return true;
+    }
+
+    return [product.handle || '', product.title, String(product.id)]
+      .join(' ')
+      .toLowerCase()
+      .includes(query);
+  });
 
   return (
     <div className="space-y-6">
@@ -514,17 +556,39 @@ export default function CollectionsPage() {
 
                 {editCollection.type === 'MANUAL' && (
                   <div>
-                    <label className="mb-1 block text-sm font-medium">Manual Product IDs</label>
-                    <textarea
-                      aria-label="Manual collection product IDs"
-                      value={manualProductIds}
-                      onChange={(e) => setManualProductIds(e.target.value)}
-                      className="w-full rounded-md border bg-background px-3 py-2"
-                      rows={3}
-                      placeholder="Example: 12, 38, 41"
+                    <label className="mb-1 block text-sm font-medium">Active Products (select by handle)</label>
+                    <input
+                      type="text"
+                      aria-label="Search active products"
+                      value={manualProductSearch}
+                      onChange={(e) => setManualProductSearch(e.target.value)}
+                      className="mb-2 w-full rounded-md border bg-background px-3 py-2"
+                      placeholder="Search by handle, title, or product ID"
                     />
+                    <select
+                      multiple
+                      aria-label="Manual collection active products"
+                      value={selectedManualProductIds.map((id) => String(id))}
+                      onChange={(e) => {
+                        const nextIds = Array.from(e.target.selectedOptions)
+                          .map((option) => Number(option.value))
+                          .filter((id) => Number.isInteger(id) && id > 0);
+                        setSelectedManualProductIds(nextIds);
+                      }}
+                      className="w-full rounded-md border bg-background px-3 py-2"
+                      size={Math.min(Math.max(filteredActiveProducts.length, 6), 12)}
+                    >
+                      {filteredActiveProducts.map((product) => (
+                        <option key={product.id} value={product.id}>
+                          {product.handle || `product-${product.id}`} - {product.title}
+                        </option>
+                      ))}
+                    </select>
+                    {loadingActiveProducts ? (
+                      <p className="mt-1 text-xs text-muted-foreground">Loading active products...</p>
+                    ) : null}
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Enter comma-separated product IDs. Saving will replace the existing manual product list.
+                      Selected: {selectedManualProductIds.length} active product(s). Hold Ctrl (Windows) to select multiple items.
                     </p>
                   </div>
                 )}

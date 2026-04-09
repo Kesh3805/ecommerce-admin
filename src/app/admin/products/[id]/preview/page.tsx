@@ -39,6 +39,7 @@ interface ProductVariant {
   sku?: string;
   price?: number;
   compareAtPrice?: number;
+  media_urls?: string[];
   option1_value?: string;
   option2_value?: string;
   option3_value?: string;
@@ -132,7 +133,10 @@ export default function ProductPreviewPage({
     .sort((a, b) => a.position - b.position)
     .map((item) => ({ ...item, url: toAbsoluteMediaUrl(item.url) }));
 
-  const [selectedMediaIndex, setSelectedMediaIndex] = useState(0);
+  const [selectedMediaState, setSelectedMediaState] = useState<{ variantKey: string; index: number }>({
+    variantKey: 'product',
+    index: 0,
+  });
   const [selectedValuesByOption, setSelectedValuesByOption] = useState<Record<string, string>>({});
 
   const selectedVariant = useMemo(() => {
@@ -158,7 +162,27 @@ export default function ProductPreviewPage({
     });
   }, [product, variants, selectedValuesByOption]);
 
-  const displayImage = media[selectedMediaIndex] || media[0];
+  const displayedMedia = useMemo(() => {
+    const variantMedia = (selectedVariant?.media_urls || [])
+      .map((url, index) => ({
+        id: -(index + 1),
+        url: toAbsoluteMediaUrl(url),
+        altText: selectedVariant?.title || product?.title,
+        position: index,
+        isCover: index === 0,
+      }))
+      .filter((item) => item.url.length > 0);
+
+    return variantMedia.length > 0 ? variantMedia : media;
+  }, [media, product?.title, selectedVariant?.media_urls, selectedVariant?.title]);
+
+  const activeVariantKey = String(selectedVariant?.id ?? 'product');
+  const selectedMediaIndex =
+    selectedMediaState.variantKey === activeVariantKey
+      ? selectedMediaState.index
+      : 0;
+
+  const displayImage = displayedMedia[selectedMediaIndex] || displayedMedia[0];
   const fallbackImage = `https://placehold.co/900x1100?text=${encodeURIComponent(product?.title || 'No Image')}`;
 
   if (loading || variantsLoading) {
@@ -207,13 +231,13 @@ export default function ProductPreviewPage({
 
       <div className="grid gap-8 lg:grid-cols-[96px_1fr_420px]">
         <div className="space-y-2">
-          {media.length > 0 ? (
-            media.map((item, index) => (
+          {displayedMedia.length > 0 ? (
+            displayedMedia.map((item, index) => (
               <button
                 type="button"
                 key={item.id}
                 className={`h-20 w-20 overflow-hidden rounded-md border ${index === selectedMediaIndex ? 'ring-2 ring-primary' : ''}`}
-                onClick={() => setSelectedMediaIndex(index)}
+                onClick={() => setSelectedMediaState({ variantKey: activeVariantKey, index })}
               >
                 <img src={item.url || fallbackImage} alt={item.altText || product.title} className="h-full w-full object-cover" />
               </button>
@@ -288,10 +312,10 @@ export default function ProductPreviewPage({
 
           <div className="space-y-3">
             <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
-              Available: {selectedVariant?.inventory_item?.total_available ?? 0}
+              {(selectedVariant?.inventory_item?.total_available ?? 0) > 0 ? 'In stock' : 'Out of order'}
             </div>
             <Button className="w-full" disabled={!selectedVariant || (selectedVariant.inventory_item?.total_available ?? 0) <= 0}>
-              {(selectedVariant?.inventory_item?.total_available ?? 0) > 0 ? 'Add to Cart' : 'Out of Stock'}
+              {(selectedVariant?.inventory_item?.total_available ?? 0) > 0 ? 'Add to Cart' : 'Out of order'}
             </Button>
           </div>
 

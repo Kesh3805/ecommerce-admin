@@ -158,17 +158,12 @@ interface AdminLayoutProps {
 
 export function AdminLayout({ children }: AdminLayoutProps) {
   const router = useRouter();
-  const authenticated = isAuthenticated();
 
   useEffect(() => {
-    if (!authenticated) {
+    if (!isAuthenticated()) {
       router.replace('/login');
     }
-  }, [authenticated, router]);
-
-  if (!authenticated) {
-    return <div className="p-6 text-sm text-muted-foreground">Checking session...</div>;
-  }
+  }, [router]);
 
   return (
     <SidebarProvider>

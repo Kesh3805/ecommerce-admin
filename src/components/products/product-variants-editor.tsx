@@ -11,6 +11,7 @@ interface ProductVariantsEditorProps {
   onOptionGroupsChange: (groups: OptionGroup[]) => void;
   variants: VariantRow[];
   onVariantsChange: (variants: VariantRow[]) => void;
+  suggestedOptionGroups?: Array<{ name: string; values: string[] }>;
 }
 
 function toSkuPart(input: string) {
@@ -22,7 +23,22 @@ export function ProductVariantsEditor({
   onOptionGroupsChange,
   variants,
   onVariantsChange,
+  suggestedOptionGroups = [],
 }: ProductVariantsEditorProps) {
+  const applyCategoryTemplate = () => {
+    const normalizedTemplates = suggestedOptionGroups
+      .map((template) => ({
+        id: crypto.randomUUID(),
+        name: template.name.trim(),
+        values: [...new Set(template.values.map((value) => value.trim()).filter((value) => value.length > 0))],
+      }))
+      .filter((template) => template.name.length > 0 && template.values.length > 0)
+      .slice(0, 3);
+
+    onOptionGroupsChange(normalizedTemplates);
+    onVariantsChange([]);
+  };
+
   const generateVariants = () => {
     const normalizedGroups = optionGroups
       .map((group) => ({
@@ -60,6 +76,7 @@ export function ProductVariantsEditor({
         price: 399,
         inventory: 20,
         inventoryPolicy: 'DENY',
+        mediaUrls: [],
       };
     });
 
@@ -76,10 +93,21 @@ export function ProductVariantsEditor({
               <CardTitle>Variant Table</CardTitle>
               <CardDescription>Generate cartesian combinations for all option values.</CardDescription>
             </div>
-            <Button type="button" variant="outline" onClick={generateVariants}>
-              <Wand2 className="mr-2 h-4 w-4" />
-              Generate variants
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={applyCategoryTemplate}
+                disabled={suggestedOptionGroups.length === 0}
+                title={suggestedOptionGroups.length === 0 ? 'No category option template available' : 'Apply category template'}
+              >
+                Use category template
+              </Button>
+              <Button type="button" variant="outline" onClick={generateVariants}>
+                <Wand2 className="mr-2 h-4 w-4" />
+                Generate variants
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>

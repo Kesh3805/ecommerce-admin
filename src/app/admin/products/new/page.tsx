@@ -11,8 +11,10 @@ import { ArrowLeft, Save } from 'lucide-react';
 
 import {
   ADD_PRODUCT_OPTION,
+  ATTACH_PRODUCT_MEDIA,
   CREATE_PRODUCT,
   CREATE_VARIANT,
+  DELETE_PRODUCT,
   GET_AVAILABLE_COUNTRIES,
   GET_BRANDS,
   GET_CATEGORIES,
@@ -32,7 +34,6 @@ import {
   ProductHeader,
   ProductMediaItem,
   ProductMediaUploader,
-  ProductMetafields,
   ProductOrganizationCard,
   ProductSEOCard,
   ProductStatus,
@@ -59,6 +60,7 @@ interface BackendCategory {
   id: number;
   name: string;
   slug: string;
+  parent_id?: number | null;
   metadata?: unknown;
 }
 
@@ -84,6 +86,29 @@ interface CreateVariantResponse {
   };
 }
 
+function toAbsoluteMediaUrl(url: string): string {
+  if (!url) {
+    return url;
+  }
+
+  if (/^https?:\/\//i.test(url) || url.startsWith('blob:') || url.startsWith('data:')) {
+    return url;
+  }
+
+  const graphQlUrl = process.env.NEXT_PUBLIC_GRAPHQL_URL || 'http://localhost:4100/graphql';
+
+  try {
+    const origin = new URL(graphQlUrl).origin;
+    return url.startsWith('/') ? `${origin}${url}` : `${origin}/${url}`;
+  } catch {
+    return url;
+  }
+}
+
+function normalizeMediaUrls(urls: string[]): string[] {
+  return [...new Set(urls.map((url) => toAbsoluteMediaUrl(url.trim())).filter((url) => url.length > 0))];
+}
+
 function slugify(input: string) {
   return input
     .trim()
@@ -100,7 +125,7 @@ function normalizeCountryCodes(codes: string[]): string[] {
   return [...new Set(codes.map((code) => code.toUpperCase()).filter((code) => /^[A-Z]{2}$/.test(code)))].sort();
 }
 
-function parseCategoryMetafields(metadata: unknown): Array<{ key: string; label: string; type: 'text' | 'textarea' }> {
+function parseCategoryOptionTemplates(metadata: unknown): Array<{ name: string; values: string[] }> {
   if (!metadata) {
     return [];
   }
@@ -113,28 +138,142 @@ function parseCategoryMetafields(metadata: unknown): Array<{ key: string; label:
     }
   })() : metadata;
 
-  const raw = (parsed as { metafields?: unknown } | null)?.metafields;
+  const raw = (parsed as { option_templates?: unknown; optionTemplates?: unknown } | null)?.option_templates
+    ?? (parsed as { option_templates?: unknown; optionTemplates?: unknown } | null)?.optionTemplates;
   if (!Array.isArray(raw)) {
     return [];
   }
 
   return raw
     .map((entry) => {
-      const key = typeof (entry as { key?: unknown }).key === 'string' ? (entry as { key: string }).key.trim() : '';
-      if (!key) {
+      const name = typeof (entry as { name?: unknown }).name === 'string' ? (entry as { name: string }).name.trim() : '';
+      if (!name) {
         return null;
       }
-
-      const labelCandidate = (entry as { label?: unknown }).label;
-      const typeCandidate = (entry as { type?: unknown }).type;
+      const rawValues = (entry as { values?: unknown }).values;
+      const values = Array.isArray(rawValues)
+        ? [...new Set(rawValues.map((value) => String(value ?? '').trim()).filter((value) => value.length > 0))]
+        : [];
 
       return {
-        key,
-        label: typeof labelCandidate === 'string' && labelCandidate.trim().length > 0 ? labelCandidate : key,
-        type: typeCandidate === 'textarea' ? 'textarea' : 'text',
+        name,
+        values,
       };
     })
-    .filter((entry): entry is { key: string; label: string; type: 'text' | 'textarea' } => entry !== null);
+    .filter((entry): entry is { name: string; values: string[] } => entry !== null);
+}
+
+function parseCategoryPathFromMetadata(metadata: unknown): string[] {
+  if (!metadata) {
+    return [];
+  }
+
+  const parsed = typeof metadata === 'string' ? (() => {
+    try {
+      return JSON.parse(metadata) as unknown;
+    } catch {
+      return null;
+    }
+  })() : metadata;
+
+  const rawPath = (parsed as { taxonomy?: { path_tree?: unknown } } | null)?.taxonomy?.path_tree;
+  if (typeof rawPath !== 'string') {
+    return [];
+  }
+
+  return rawPath.split('>').map((segment) => segment.trim()).filter((segment) => segment.length > 0);
+}
+
+function buildCategoryHierarchyOptions(categories: BackendCategory[]): CategoryOption[] {
+  if (categories.length === 0) {
+    return [];
+  }
+
+  const byId = new Map<number, BackendCategory>(categories.map((category) => [category.id, category]));
+  const childrenByParentId = new Map<number | null, BackendCategory[]>();
+
+  for (const category of categories) {
+    const parentId = Number.isInteger(category.parent_id) && byId.has(Number(category.parent_id))
+      ? Number(category.parent_id)
+      : null;
+
+    const siblings = childrenByParentId.get(parentId) ?? [];
+    siblings.push(category);
+    childrenByParentId.set(parentId, siblings);
+  }
+
+  const sortByName = (left: BackendCategory, right: BackendCategory) => left.name.localeCompare(right.name);
+  for (const [parentId, siblings] of childrenByParentId.entries()) {
+    childrenByParentId.set(parentId, [...siblings].sort(sortByName));
+  }
+
+  const pathCache = new Map<number, string[]>();
+  const resolvePath = (category: BackendCategory, trail = new Set<number>()): string[] => {
+    const cached = pathCache.get(category.id);
+    if (cached) {
+      return cached;
+    }
+
+    const metadataPath = parseCategoryPathFromMetadata(category.metadata);
+    if (metadataPath.length > 0) {
+      pathCache.set(category.id, metadataPath);
+      return metadataPath;
+    }
+
+    if (trail.has(category.id)) {
+      return [category.name];
+    }
+
+    const nextTrail = new Set(trail);
+    nextTrail.add(category.id);
+
+    const parentId = Number.isInteger(category.parent_id) ? Number(category.parent_id) : null;
+    if (parentId && byId.has(parentId)) {
+      const parent = byId.get(parentId)!;
+      const resolved = [...resolvePath(parent, nextTrail), category.name];
+      pathCache.set(category.id, resolved);
+      return resolved;
+    }
+
+    const rootPath = [category.name];
+    pathCache.set(category.id, rootPath);
+    return rootPath;
+  };
+
+  const ordered: BackendCategory[] = [];
+  const visited = new Set<number>();
+
+  const walk = (parentId: number | null): void => {
+    for (const category of childrenByParentId.get(parentId) ?? []) {
+      if (visited.has(category.id)) {
+        continue;
+      }
+
+      visited.add(category.id);
+      ordered.push(category);
+      walk(category.id);
+    }
+  };
+
+  walk(null);
+  for (const category of [...categories].sort(sortByName)) {
+    if (visited.has(category.id)) {
+      continue;
+    }
+
+    ordered.push(category);
+    walk(category.id);
+  }
+
+  return ordered.map((category) => ({
+    id: String(category.id),
+    label: category.name,
+    optionTemplates: parseCategoryOptionTemplates(category.metadata),
+    parentId: Number.isInteger(category.parent_id) && byId.has(Number(category.parent_id))
+      ? String(category.parent_id)
+      : null,
+    depth: Math.max(resolvePath(category).length - 1, 0),
+  }));
 }
 
 export default function NewProductPage() {
@@ -168,8 +307,10 @@ export default function NewProductPage() {
   const [mediaItems, setMediaItems] = useState<ProductMediaItem[]>([]);
   const [optionGroups, setOptionGroups] = useState<OptionGroup[]>([]);
   const [variantRows, setVariantRows] = useState<VariantRow[]>([]);
-  const [metafieldValues, setMetafieldValues] = useState<Record<string, string>>({});
   const [selectedCountryCodes, setSelectedCountryCodes] = useState<string[]>([]);
+  const [mediaUploadError, setMediaUploadError] = useState<string | null>(null);
+  const [mediaSuccessMessage, setMediaSuccessMessage] = useState<string | null>(null);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
 
   const { data: availableCountriesData } = useQuery<GetAvailableCountriesResponse>(GET_AVAILABLE_COUNTRIES, {
     variables: { storeId },
@@ -231,20 +372,20 @@ export default function NewProductPage() {
     [brandsData],
   );
 
-  const categoryOptions: CategoryOption[] = [
-    {
-      id: '__none__',
-      label: 'No category',
-      metafields: [],
-    },
-    ...(categoriesData?.categories || []).map((category) => ({
-      id: String(category.id),
-      label: category.name,
-      metafields: parseCategoryMetafields(category.metadata),
-    })),
-  ];
+  const categoryOptions: CategoryOption[] = useMemo(
+    () => [
+      {
+        id: '__none__',
+        label: 'No category',
+        optionTemplates: [],
+      },
+      ...buildCategoryHierarchyOptions(categoriesData?.categories || []),
+    ],
+    [categoriesData?.categories],
+  );
 
   const selectedCategoryId = useWatch({ control, name: 'categoryId' });
+  const selectedBrand = useWatch({ control, name: 'brand' }) || '';
   useEffect(() => {
     if (!selectedCategoryId) {
       setValue('categoryId', categoryOptions[0].id);
@@ -254,7 +395,7 @@ export default function NewProductPage() {
   const selectedCategory = categoryOptions.find((category) => category.id === selectedCategoryId) || {
     id: '',
     label: 'Uncategorized',
-    metafields: [],
+    optionTemplates: [],
   };
 
   const [createProduct, { loading }] = useMutation<{ createProduct: { id: number } }>(CREATE_PRODUCT, {
@@ -265,6 +406,8 @@ export default function NewProductPage() {
 
   const [addProductOption] = useMutation(ADD_PRODUCT_OPTION);
   const [createVariant] = useMutation<CreateVariantResponse>(CREATE_VARIANT);
+  const [attachProductMedia] = useMutation(ATTACH_PRODUCT_MEDIA);
+  const [deleteProductRollback] = useMutation(DELETE_PRODUCT);
   const [setInventoryLevel] = useMutation(SET_INVENTORY_LEVEL);
 
   const { data: locationsData } = useQuery<{ locations: Array<{ location_id: number; is_active: boolean }> }>(
@@ -281,20 +424,53 @@ export default function NewProductPage() {
       return;
     }
 
+    if (uploadingFiles) {
+      setError('root', { message: 'Please wait for media uploads to finish before saving.' });
+      return;
+    }
+
     const parsedCategoryId = Number(data.categoryId);
-    const categoryIds = Number.isInteger(parsedCategoryId) && parsedCategoryId > 0 ? [parsedCategoryId] : undefined;
+    const categoryId = Number.isInteger(parsedCategoryId) && parsedCategoryId > 0 ? parsedCategoryId : undefined;
     const computedHandle = data.seoHandle?.trim() || slugify(data.title);
     if (selectedCountryCodes.length === 0) {
       setError('root', { message: 'Select at least one country for product availability.' });
       return;
     }
 
-    const normalizedMetafields = Object.entries(metafieldValues)
-      .map(([key, value]) => ({
-        key: key.trim(),
-        value: value.trim(),
+    const normalizedOptionGroups = optionGroups
+      .map((group) => ({
+        name: group.name.trim(),
+        values: group.values.map((value) => value.trim()).filter((value) => value.length > 0),
       }))
-      .filter((entry) => entry.key.length > 0 && entry.value.length > 0);
+      .filter((group) => group.name.length > 0 && group.values.length > 0);
+
+    if (normalizedOptionGroups.length > 0 && variantRows.length === 0) {
+      setError('root', { message: 'Generate variants before saving this product.' });
+      return;
+    }
+
+    const normalizedVariantRows = variantRows.filter(
+      (row) => row.sku.trim().length > 0 && Number.isFinite(row.price) && row.price >= 0,
+    );
+
+    if (variantRows.length > 0 && normalizedVariantRows.length !== variantRows.length) {
+      setError('root', {
+        message: 'Every variant must have a valid SKU and non-negative price before saving.',
+      });
+      return;
+    }
+
+    const productMediaUrls = normalizeMediaUrls(mediaItems.map((item) => item.url));
+    const hasUnsavedBlobMedia = productMediaUrls.some((url) => url.startsWith('blob:'));
+
+    if (hasUnsavedBlobMedia) {
+      setError('root', {
+        message: 'One or more media files are not uploaded yet. Please re-upload and try again.',
+      });
+      return;
+    }
+
+    let createdProductId: number | null = null;
 
     try {
       const created = await createProduct({
@@ -305,35 +481,44 @@ export default function NewProductPage() {
             brand: data.brand || undefined,
             status,
             store_id: storeId,
-            category_ids: categoryIds,
+            category_id: categoryId,
             seo: {
               handle: computedHandle,
               meta_title: data.seoTitle || undefined,
               meta_description: data.seoDescription || undefined,
             },
-            metafields: normalizedMetafields.length > 0 ? normalizedMetafields : undefined,
+            primary_image_url: productMediaUrls[0],
+            media_urls: productMediaUrls.length > 0 ? productMediaUrls : undefined,
             country_codes: selectedCountryCodes,
           },
         },
       });
 
-      const createdProductId = created.data?.createProduct?.id;
-      if (!createdProductId) {
+      const resolvedProductId = created.data?.createProduct?.id;
+      if (!resolvedProductId) {
         throw new Error('Product creation failed: missing product ID in response.');
       }
+      createdProductId = resolvedProductId;
 
-      const normalizedOptionGroups = optionGroups
-        .map((group) => ({
-          name: group.name.trim(),
-          values: group.values.map((value) => value.trim()).filter((value) => value.length > 0),
-        }))
-        .filter((group) => group.name.length > 0 && group.values.length > 0);
+      for (const [index, mediaUrl] of productMediaUrls.entries()) {
+        await attachProductMedia({
+          variables: {
+            input: {
+              product_id: resolvedProductId,
+              url: mediaUrl,
+              type: 'IMAGE',
+              position: index + 1,
+              is_cover: index === 0,
+            },
+          },
+        });
+      }
 
       for (const [index, group] of normalizedOptionGroups.entries()) {
         await addProductOption({
           variables: {
             input: {
-              product_id: createdProductId,
+              product_id: resolvedProductId,
               name: group.name,
               values: group.values,
               position: index,
@@ -344,10 +529,6 @@ export default function NewProductPage() {
 
       const activeLocation = (locationsData?.locations || []).find((location) => location.is_active);
 
-      const normalizedVariantRows = variantRows.filter(
-        (row) => row.sku.trim().length > 0 && Number.isFinite(row.price) && row.price >= 0,
-      );
-
       for (const row of normalizedVariantRows) {
         const optionNamesInOrder = normalizedOptionGroups.map((group) => group.name);
         const optionValuesInOrder = optionNamesInOrder.map((name) => row.options[name]);
@@ -355,13 +536,14 @@ export default function NewProductPage() {
         const createdVariant = await createVariant({
           variables: {
             input: {
-              product_id: createdProductId,
+              product_id: resolvedProductId,
               option1_value: optionValuesInOrder[0] || undefined,
               option2_value: optionValuesInOrder[1] || undefined,
               option3_value: optionValuesInOrder[2] || undefined,
               sku: row.sku,
               price: row.price,
               inventory_policy: row.inventoryPolicy,
+              media_urls: Array.isArray(row.mediaUrls) && row.mediaUrls.length > 0 ? row.mediaUrls : undefined,
               create_inventory: true,
             },
           },
@@ -381,9 +563,20 @@ export default function NewProductPage() {
         }
       }
 
-      router.push('/admin/products');
+      router.push(`/admin/products/${resolvedProductId}`);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Failed to create product.';
+
+      if (createdProductId) {
+        try {
+          await deleteProductRollback({ variables: { id: createdProductId } });
+        } catch {
+          setError('root', {
+            message: `${message} Product ${createdProductId} may have been partially created. Please delete it manually if needed.`,
+          });
+          return;
+        }
+      }
 
       if (message.toLowerCase().includes('duplicate key value')) {
         setError('root', {
@@ -396,6 +589,61 @@ export default function NewProductPage() {
       setError('root', { message });
     }
   };
+
+  const handleUploadFiles = async (files: File[]) => {
+    if (!files.length) {
+      return;
+    }
+
+    setMediaUploadError(null);
+    setMediaSuccessMessage(null);
+    setUploadingFiles(true);
+
+    try {
+      const graphQlUrl = process.env.NEXT_PUBLIC_GRAPHQL_URL || 'http://localhost:4100/graphql';
+      const apiBaseUrl = new URL(graphQlUrl).origin;
+      const token = typeof window !== 'undefined' ? localStorage.getItem('admin_access_token') : null;
+      const uploadedItems: ProductMediaItem[] = [];
+
+      for (const file of files) {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const uploadResponse = await fetch(`${apiBaseUrl}/api/media/upload`, {
+          method: 'POST',
+          body: formData,
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
+
+        if (!uploadResponse.ok) {
+          const errorText = await uploadResponse.text();
+          throw new Error(errorText || `Failed to upload ${file.name}`);
+        }
+
+        const uploadResult = (await uploadResponse.json()) as { url?: string };
+        if (!uploadResult.url) {
+          throw new Error(`Upload endpoint did not return a URL for ${file.name}`);
+        }
+
+        uploadedItems.push({
+          id: crypto.randomUUID(),
+          url: toAbsoluteMediaUrl(uploadResult.url),
+          name: file.name,
+          size: file.size,
+        });
+      }
+
+      setMediaItems((current) => [...current, ...uploadedItems]);
+      setMediaSuccessMessage(`Uploaded ${files.length} file${files.length === 1 ? '' : 's'} successfully.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'File upload failed.';
+      setMediaUploadError(message);
+    } finally {
+      setUploadingFiles(false);
+    }
+  };
+
+  const handleSaveProduct = handleSubmit(onSubmit);
 
   const title = useWatch({ control, name: 'title' }) || 'New Product';
   const description = useWatch({ control, name: 'description' }) || '';
@@ -415,17 +663,19 @@ export default function NewProductPage() {
         <div className="flex-1">
           <ProductHeader
             title={title}
-            description="Create a Shopify-like product onboarding flow with media, variants, and metafields."
+            description="Create a Shopify-like product onboarding flow with media and variants."
           />
         </div>
         <Badge variant={status === 'ACTIVE' ? 'default' : 'secondary'} className="px-3 py-1">
           {status}
         </Badge>
-        <Button type="submit" disabled={loading || isSubmitting}>
+        <Button type="button" onClick={() => void handleSaveProduct()} disabled={loading || isSubmitting}>
           <Save className="mr-2 h-4 w-4" />
           Save Product
         </Button>
       </div>
+
+      {errors.root && <p className="text-sm text-destructive">{errors.root.message}</p>}
 
       {!myStoresLoading && !storeId && (
         <p className="text-sm text-destructive">No accessible store found for your account.</p>
@@ -439,17 +689,16 @@ export default function NewProductPage() {
               value={description}
               onChange={(value) => setValue('description', value, { shouldDirty: true })}
             />
-            <ProductMediaUploader media={mediaItems} onChange={setMediaItems} />
+            <ProductMediaUploader media={mediaItems} onChange={setMediaItems} onUploadFiles={handleUploadFiles} />
+            {uploadingFiles && <p className="text-sm text-muted-foreground">Uploading files...</p>}
+            {mediaSuccessMessage && <p className="text-sm text-green-600">{mediaSuccessMessage}</p>}
+            {mediaUploadError && <p className="text-sm text-destructive">{mediaUploadError}</p>}
             <ProductVariantsEditor
               optionGroups={optionGroups}
               onOptionGroupsChange={setOptionGroups}
               variants={variantRows}
               onVariantsChange={setVariantRows}
-            />
-            <ProductMetafields
-              fields={selectedCategory.metafields}
-              values={metafieldValues}
-              onChange={(key, value) => setMetafieldValues((current) => ({ ...current, [key]: value }))}
+              suggestedOptionGroups={selectedCategory.optionTemplates}
             />
           </>
         )}
@@ -461,8 +710,9 @@ export default function NewProductPage() {
               categories={categoryOptions}
               categoryId={selectedCategoryId || ''}
               onCategoryChange={(categoryId) => setValue('categoryId', categoryId, { shouldDirty: true })}
+              brandValue={selectedBrand}
               brandSuggestions={brandSuggestions}
-              onBrandSelect={(brand) => setValue('brand', brand, { shouldDirty: true })}
+              onBrandChange={(brand) => setValue('brand', brand, { shouldDirty: true })}
             />
             <ProductSEOCard register={register} />
             <div className="rounded-xl border bg-card p-4">
@@ -510,7 +760,6 @@ export default function NewProductPage() {
           Could not load categories from backend. You can still create the product without category.
         </p>
       )}
-      {errors.root && <p className="text-sm text-destructive">{errors.root.message}</p>}
     </form>
   );
 }
